@@ -1,5 +1,10 @@
 // NetOps AI - Prisma schema
 // Phase 1: authentication (User) and reference data (Vendor, DeviceType, Technology).
+// Phase 2: case management core (TroubleshootingCase, TroubleshootingStep, AuditLog).
+//
+// Not in scope yet (added in later phases): KnowledgeBaseArticle, CommandCatalogEntry,
+// vector/embedding tables, AI-generated step content (fields are present and ready,
+// but nothing in Phase 2 populates them).
 
 generator client {
   provider     = "prisma-client"
@@ -17,6 +22,35 @@ enum Role {
   VIEWER
 }
 
+enum Severity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum CaseStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum StepType {
+  COMMAND
+  NOTE
+  AI_ANALYSIS
+  NEXT_STEP_RECOMMENDATION
+  STATUS_CHANGE
+}
+
+enum ApprovalState {
+  NOT_REQUIRED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 model User {
   id           String   @id @default(cuid())
   name         String
@@ -26,29 +60,117 @@ model User {
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
+  createdCases   TroubleshootingCase[] @relation("CaseCreatedBy")
+  performedSteps TroubleshootingStep[] @relation("StepPerformedBy")
+  approvedSteps  TroubleshootingStep[] @relation("StepApprovedBy")
+  auditLogs      AuditLog[]
 }
 
 model Vendor {
-  id          String       @id @default(cuid())
-  name        String       @unique
-  slug        String       @unique
-  createdAt   DateTime     @default(now())
+  id          String                @id @default(cuid())
+  name        String                @unique
+  slug        String                @unique
+  createdAt   DateTime              @default(now())
   deviceTypes DeviceType[]
+  cases       TroubleshootingCase[]
 }
 
 model DeviceType {
-  id        String   @id @default(cuid())
+  id        String                @id @default(cuid())
   name      String
   vendorId  String
-  vendor    Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
+  vendor    Vendor                @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  createdAt DateTime              @default(now())
+  cases     TroubleshootingCase[]
 
   @@unique([vendorId, name])
 }
 
 model Technology {
-  id        String   @id @default(cuid())
-  name      String   @unique
-  slug      String   @unique
+  id        String                @id @default(cuid())
+  name      String                @unique
+  slug      String                @unique
+  createdAt DateTime              @default(now())
+  cases     TroubleshootingCase[]
+}
+
+model TroubleshootingCase {
+  id           String     @id @default(cuid())
+  title        String
+  description  String
+  vendorId     String
+  vendor       Vendor     @relation(fields: [vendorId], references: [id])
+  deviceTypeId String
+  deviceType   DeviceType @relation(fields: [deviceTypeId], references: [id])
+  technologyId String
+  technology   Technology @relation(fields: [technologyId], references: [id])
+  severity     Severity
+  status       CaseStatus @default(OPEN)
+  createdById  String
+  createdBy    User       @relation("CaseCreatedBy", fields: [createdById], references: [id])
+
+  // Populated when the case is resolved.
+  rootCause    String?
+  resolution   String?
+  verification String?
+  resolvedAt   DateTime?
+
+  // Soft delete only - see AGENTS.md safety rule on not deleting history
+  // without explicit confirmation.
+  deletedAt DateTime?
+
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  steps TroubleshootingStep[]
+
+  @@index([status])
+  @@index([vendorId])
+  @@index([deletedAt])
+}
+
+model TroubleshootingStep {
+  id     String              @id @default(cuid())
+  caseId String
+  case   TroubleshootingCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  type   StepType
+
+  // COMMAND fields
+  commandText    String?
+  commandOutput  String?
+  isConfigChange Boolean       @default(false)
+  approvalState  ApprovalState @default(NOT_REQUIRED)
+  approvedById   String?
+  approvedBy     User?         @relation("StepApprovedBy", fields: [approvedById], references: [id])
+  approvedAt     DateTime?
+
+  // NOTE / STATUS_CHANGE fields
+  note String?
+
+  // AI fields - not populated until the AI integration phase.
+  aiAnalysis          String?
+  recommendedNextStep String?
+  aiModel             String?
+
+  performedById String
+  performedBy   User     @relation("StepPerformedBy", fields: [performedById], references: [id])
+  createdAt     DateTime @default(now())
+
+  @@index([caseId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  action     String
+  entityType String
+  entityId   String
+  metadata   Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([userId])
 }
