@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getCurrentUser } from "@/lib/dal";
 import { getCaseDetail } from "@/lib/data/cases";
@@ -51,7 +52,17 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ cas
 
       {(troubleshootingCase.status === "RESOLVED" || troubleshootingCase.status === "CLOSED") && (
         <div className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
-          <h2 className="font-medium text-zinc-900 dark:text-zinc-50">Resolution Summary</h2>
+          <div className="flex items-start justify-between gap-4">
+            <h2 className="font-medium text-zinc-900 dark:text-zinc-50">Resolution Summary</h2>
+            {canAct && (
+              <Link
+                href={`/kb/new?fromCase=${troubleshootingCase.id}`}
+                className="shrink-0 rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:border-zinc-700 dark:text-zinc-300"
+              >
+                Publish to Knowledge Base
+              </Link>
+            )}
+          </div>
           <dl className="mt-3 space-y-3 text-sm">
             <div>
               <dt className="font-medium text-zinc-500 dark:text-zinc-400">Root Cause</dt>

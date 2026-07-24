@@ -1,10 +1,12 @@
 // NetOps AI - Prisma schema
 // Phase 1: authentication (User) and reference data (Vendor, DeviceType, Technology).
 // Phase 2: case management core (TroubleshootingCase, TroubleshootingStep, AuditLog).
+// Phase 3: knowledge base (KnowledgeBaseArticle), optionally linked back to the
+// case it was authored from.
 //
-// Not in scope yet (added in later phases): KnowledgeBaseArticle, CommandCatalogEntry,
-// vector/embedding tables, AI-generated step content (fields are present and ready,
-// but nothing in Phase 2 populates them).
+// Not in scope yet (added in later phases): CommandCatalogEntry, vector/embedding
+// tables, AI-generated step content (fields are present and ready, but nothing
+// populates them yet).
 
 generator client {
   provider     = "prisma-client"
@@ -51,6 +53,12 @@ enum ApprovalState {
   REJECTED
 }
 
+enum ArticleStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
 model User {
   id           String   @id @default(cuid())
   name         String
@@ -61,19 +69,22 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  createdCases   TroubleshootingCase[] @relation("CaseCreatedBy")
-  performedSteps TroubleshootingStep[] @relation("StepPerformedBy")
-  approvedSteps  TroubleshootingStep[] @relation("StepApprovedBy")
-  auditLogs      AuditLog[]
+  createdCases    TroubleshootingCase[]  @relation("CaseCreatedBy")
+  performedSteps  TroubleshootingStep[]  @relation("StepPerformedBy")
+  approvedSteps   TroubleshootingStep[]  @relation("StepApprovedBy")
+  auditLogs       AuditLog[]
+  createdArticles KnowledgeBaseArticle[] @relation("ArticleCreatedBy")
+  updatedArticles KnowledgeBaseArticle[] @relation("ArticleUpdatedBy")
 }
 
 model Vendor {
-  id          String                @id @default(cuid())
-  name        String                @unique
-  slug        String                @unique
-  createdAt   DateTime              @default(now())
+  id          String                 @id @default(cuid())
+  name        String                 @unique
+  slug        String                 @unique
+  createdAt   DateTime               @default(now())
   deviceTypes DeviceType[]
   cases       TroubleshootingCase[]
+  articles    KnowledgeBaseArticle[]
 }
 
 model DeviceType {
@@ -88,11 +99,12 @@ model DeviceType {
 }
 
 model Technology {
-  id        String                @id @default(cuid())
-  name      String                @unique
-  slug      String                @unique
-  createdAt DateTime              @default(now())
+  id        String                 @id @default(cuid())
+  name      String                 @unique
+  slug      String                 @unique
+  createdAt DateTime               @default(now())
   cases     TroubleshootingCase[]
+  articles  KnowledgeBaseArticle[]
 }
 
 model TroubleshootingCase {
@@ -123,7 +135,8 @@ model TroubleshootingCase {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  steps TroubleshootingStep[]
+  steps      TroubleshootingStep[]
+  kbArticles KnowledgeBaseArticle[]
 
   @@index([status])
   @@index([vendorId])
@@ -173,4 +186,39 @@ model AuditLog {
 
   @@index([entityType, entityId])
   @@index([userId])
+}
+
+model KnowledgeBaseArticle {
+  id      String        @id @default(cuid())
+  title   String
+  slug    String        @unique
+  summary String
+  content String
+  status  ArticleStatus @default(DRAFT)
+
+  vendorId     String?
+  vendor       Vendor?     @relation(fields: [vendorId], references: [id])
+  technologyId String?
+  technology   Technology? @relation(fields: [technologyId], references: [id])
+
+  // Optional link back to the case this article was authored from.
+  sourceCaseId String?
+  sourceCase   TroubleshootingCase? @relation(fields: [sourceCaseId], references: [id])
+
+  createdById String
+  createdBy   User    @relation("ArticleCreatedBy", fields: [createdById], references: [id])
+  updatedById String?
+  updatedBy   User?   @relation("ArticleUpdatedBy", fields: [updatedById], references: [id])
+
+  // Soft delete only - see AGENTS.md safety rule on not deleting history
+  // without explicit confirmation.
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([vendorId])
+  @@index([technologyId])
+  @@index([deletedAt])
 }

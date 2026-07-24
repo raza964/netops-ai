@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import type { Role } from "@/generated/prisma/client";
+import type { ArticleStatus, Role } from "@/generated/prisma/client";
 
 let counter = 0;
 function unique(prefix: string): string {
@@ -9,6 +9,7 @@ function unique(prefix: string): string {
 
 /** Deletes all rows from every application table, in FK-safe order. */
 export async function resetDatabase() {
+  await prisma.knowledgeBaseArticle.deleteMany();
   await prisma.auditLog.deleteMany();
   await prisma.troubleshootingStep.deleteMany();
   await prisma.troubleshootingCase.deleteMany();
@@ -46,6 +47,34 @@ export async function createTestCase(createdById: string) {
       deviceTypeId: deviceType.id,
       technologyId: technology.id,
       severity: "MEDIUM",
+      createdById,
+    },
+  });
+}
+
+export async function createTestArticle(
+  createdById: string,
+  overrides: Partial<{
+    status: ArticleStatus;
+    vendorId: string | null;
+    technologyId: string | null;
+    sourceCaseId: string | null;
+    title: string;
+    summary: string;
+    content: string;
+  }> = {},
+) {
+  const title = overrides.title ?? unique("Article");
+  return prisma.knowledgeBaseArticle.create({
+    data: {
+      title,
+      slug: unique("article"),
+      summary: overrides.summary ?? "Test summary, long enough to pass validation.",
+      content: overrides.content ?? "Test content body, long enough to pass validation checks easily.",
+      status: overrides.status ?? "DRAFT",
+      vendorId: overrides.vendorId ?? null,
+      technologyId: overrides.technologyId ?? null,
+      sourceCaseId: overrides.sourceCaseId ?? null,
       createdById,
     },
   });
