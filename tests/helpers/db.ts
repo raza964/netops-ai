@@ -9,6 +9,7 @@ function unique(prefix: string): string {
 
 /** Deletes all rows from every application table, in FK-safe order. */
 export async function resetDatabase() {
+  await prisma.contentEmbedding.deleteMany();
   await prisma.knowledgeBaseArticle.deleteMany();
   await prisma.commandCatalogEntry.deleteMany();
   await prisma.auditLog.deleteMany();

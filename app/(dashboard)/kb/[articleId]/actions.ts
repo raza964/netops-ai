@@ -6,6 +6,20 @@ import { requireRole } from "@/lib/dal";
 import { recordAudit } from "@/lib/audit";
 import { archiveArticle, getArticleDetail, publishArticle, softDeleteArticle, updateArticle } from "@/lib/data/kb";
 import { deleteArticleSchema, updateArticleSchema } from "@/lib/validation/kb";
+import { indexKbArticle, removeArticleEmbedding } from "@/lib/embeddings/indexer";
+
+/**
+ * Indexing is best-effort: a Voyage outage must never block a publish/edit
+ * from succeeding, so failures are logged and swallowed here rather than
+ * propagated to the caller.
+ */
+async function reindexArticle(articleId: string) {
+  try {
+    await indexKbArticle(articleId);
+  } catch (error) {
+    console.error(`Failed to index KnowledgeBaseArticle ${articleId} for search`, error);
+  }
+}
 
 export async function updateArticleAction(articleId: string, _prevState: string | undefined, formData: FormData) {
   const user = await requireRole(["ENGINEER", "ADMIN"]);
@@ -40,6 +54,8 @@ export async function updateArticleAction(articleId: string, _prevState: string 
     metadata: { title: parsed.data.title },
   });
 
+  await reindexArticle(articleId);
+
   redirect(`/kb/${articleId}`);
 }
 
@@ -56,6 +72,8 @@ export async function publishArticleAction(articleId: string) {
     metadata: {},
   });
 
+  await reindexArticle(articleId);
+
   revalidatePath(`/kb/${articleId}`);
 }
 
@@ -71,6 +89,8 @@ export async function archiveArticleAction(articleId: string) {
     entityId: articleId,
     metadata: {},
   });
+
+  await removeArticleEmbedding(articleId);
 
   revalidatePath(`/kb/${articleId}`);
 }
@@ -97,6 +117,8 @@ export async function softDeleteArticleAction(articleId: string, _prevState: str
     entityId: articleId,
     metadata: { title: article.title },
   });
+
+  await removeArticleEmbedding(articleId);
 
   redirect("/kb");
 }

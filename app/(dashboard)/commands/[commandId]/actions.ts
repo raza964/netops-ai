@@ -13,6 +13,20 @@ import {
   updateCommand,
 } from "@/lib/data/commands";
 import { deleteCommandSchema, updateCommandSchema } from "@/lib/validation/command";
+import { indexCommand, removeCommandEmbedding } from "@/lib/embeddings/indexer";
+
+/**
+ * Indexing is best-effort: a Voyage outage must never block a publish/edit
+ * from succeeding, so failures are logged and swallowed here rather than
+ * propagated to the caller.
+ */
+async function reindexCommand(commandId: string) {
+  try {
+    await indexCommand(commandId);
+  } catch (error) {
+    console.error(`Failed to index CommandCatalogEntry ${commandId} for search`, error);
+  }
+}
 
 export async function updateCommandAction(commandId: string, _prevState: string | undefined, formData: FormData) {
   const user = await requireRole(["ENGINEER", "ADMIN"]);
@@ -67,6 +81,8 @@ export async function updateCommandAction(commandId: string, _prevState: string 
     metadata: { title: parsed.data.title },
   });
 
+  await reindexCommand(commandId);
+
   redirect(`/commands/${commandId}`);
 }
 
@@ -83,6 +99,8 @@ export async function publishCommandAction(commandId: string) {
     metadata: {},
   });
 
+  await reindexCommand(commandId);
+
   revalidatePath(`/commands/${commandId}`);
 }
 
@@ -98,6 +116,8 @@ export async function archiveCommandAction(commandId: string) {
     entityId: commandId,
     metadata: {},
   });
+
+  await removeCommandEmbedding(commandId);
 
   revalidatePath(`/commands/${commandId}`);
 }
@@ -124,6 +144,8 @@ export async function softDeleteCommandAction(commandId: string, _prevState: str
     entityId: commandId,
     metadata: { title: command.title },
   });
+
+  await removeCommandEmbedding(commandId);
 
   redirect("/commands");
 }

@@ -6,10 +6,15 @@
 // Phase 4: command catalog (CommandCatalogEntry), a searchable reference of
 // vendor/device/technology-scoped commands. TroubleshootingStep carries an
 // optional link to a catalog entry, ready for a later phase to wire up.
+// Phase 5: semantic search (ContentEmbedding) over published KnowledgeBaseArticle
+// and CommandCatalogEntry content. Vectors are stored as a plain float array -
+// no pgvector extension is available in this environment - and similarity is
+// computed in application code (see lib/embeddings/). The storage/search split
+// is deliberately abstracted so a pgvector-backed index can replace the
+// in-app ranking later without changing callers.
 //
-// Not in scope yet (added in later phases): vector/embedding tables,
-// AI-generated step content (fields are present and ready, but nothing
-// populates them yet).
+// Not in scope yet (added in later phases): AI-generated step content (fields
+// are present and ready on TroubleshootingStep, but nothing populates them yet).
 
 generator client {
   provider     = "prisma-client"
@@ -73,6 +78,11 @@ enum CommandStatus {
   DRAFT
   PUBLISHED
   ARCHIVED
+}
+
+enum EmbeddingSourceType {
+  KB_ARTICLE
+  COMMAND_CATALOG_ENTRY
 }
 
 model User {
@@ -244,6 +254,8 @@ model KnowledgeBaseArticle {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  embedding ContentEmbedding?
+
   @@index([status])
   @@index([vendorId])
   @@index([technologyId])
@@ -282,7 +294,8 @@ model CommandCatalogEntry {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  steps TroubleshootingStep[]
+  steps     TroubleshootingStep[]
+  embedding ContentEmbedding?
 
   @@index([status])
   @@index([vendorId])
@@ -291,4 +304,39 @@ model CommandCatalogEntry {
   @@index([riskLevel])
   @@index([deletedAt])
   @@index([vendorId, deviceTypeId])
+}
+
+/// Stores one vector per searchable source (a KnowledgeBaseArticle or a
+/// CommandCatalogEntry - exactly one of kbArticleId/commandId is set, enforced
+/// in lib/embeddings/indexer.ts rather than a DB constraint, matching this
+/// schema's existing convention of enforcing cross-field business rules in
+/// code). No pgvector extension is available in this environment, so the
+/// vector is a plain Float[] and similarity is computed in application code
+/// (see lib/embeddings/similarity.ts) - swapping in a pgvector index later
+/// only touches that layer, not this table's shape.
+model ContentEmbedding {
+  id         String              @id @default(cuid())
+  sourceType EmbeddingSourceType
+
+  kbArticleId String?               @unique
+  kbArticle   KnowledgeBaseArticle? @relation(fields: [kbArticleId], references: [id], onDelete: Cascade)
+  commandId   String?               @unique
+  command     CommandCatalogEntry?  @relation(fields: [commandId], references: [id], onDelete: Cascade)
+
+  // Exact text that was embedded, and its hash - re-indexing compares the
+  // current content's hash against this to skip unchanged-content API calls.
+  content     String
+  contentHash String
+  embedding   Float[]
+
+  // Which provider/model/dimensionality produced this vector, so a future
+  // model or provider change can be detected and force a re-embed.
+  model      String
+  dimensions Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sourceType])
+  @@index([contentHash])
 }
