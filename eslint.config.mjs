@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Stray build directory that can appear alongside .next in this
+    // environment - see the .gitignore entry and 8d722ab.
+    ".next-verify/**",
   ]),
 ]);
 
