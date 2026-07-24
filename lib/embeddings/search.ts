@@ -2,6 +2,7 @@ import "server-only";
 import { listSearchableEmbeddings } from "../data/embeddings";
 import { cosineSimilarity } from "./similarity";
 import { voyageEmbeddingProvider, type EmbeddingProvider } from "./provider";
+import type { EmbeddingSourceType } from "../../generated/prisma/client";
 
 export type SemanticSearchResult = {
   score: number;
@@ -20,12 +21,15 @@ export type SemanticSearchResult = {
  */
 export async function semanticSearch(
   query: string,
-  options: { limit?: number; provider?: EmbeddingProvider } = {},
+  options: { limit?: number; provider?: EmbeddingProvider; sourceType?: EmbeddingSourceType } = {},
 ): Promise<SemanticSearchResult[]> {
   const provider = options.provider ?? voyageEmbeddingProvider;
   const limit = options.limit ?? 10;
 
-  const [queryVector, candidates] = await Promise.all([provider.embedQuery(query), listSearchableEmbeddings()]);
+  const [queryVector, candidates] = await Promise.all([
+    provider.embedQuery(query),
+    listSearchableEmbeddings(options.sourceType),
+  ]);
 
   const results: SemanticSearchResult[] = candidates.map((row) => {
     const isArticle = row.kbArticle !== null;

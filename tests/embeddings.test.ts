@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { prisma } from "@/lib/db";
 import { env } from "@/lib/env";
@@ -12,8 +13,11 @@ function createFakeProvider(vector: number[]) {
   return {
     model: "fake-embedding-model",
     dimensions: vector.length,
-    embedDocument: vi.fn(async () => vector),
-    embedQuery: vi.fn(async () => vector),
+    // Typed via the generic (not a named implementation param) so
+    // mock.calls[0][0] stays typed as `string` without an unused-var lint
+    // warning on an implementation that doesn't need to read its argument.
+    embedDocument: vi.fn<(text: string) => Promise<number[]>>(async () => vector),
+    embedQuery: vi.fn<(text: string) => Promise<number[]>>(async () => vector),
   };
 }
 
@@ -113,6 +117,87 @@ describe("indexKbArticle", () => {
     expect(await prisma.contentEmbedding.findUnique({ where: { kbArticleId: article.id } })).toBeNull();
   });
 
+  it("re-indexes correctly when a previously-archived article is republished", async () => {
+    const user = await createTestUser("ENGINEER");
+    const article = await createTestArticle(user.id, { status: "PUBLISHED" });
+    const provider = createFakeProvider([1, 0, 0]);
+    await indexKbArticle(article.id, provider);
+
+    await prisma.knowledgeBaseArticle.update({ where: { id: article.id }, data: { status: "ARCHIVED" } });
+    await indexKbArticle(article.id, provider);
+    expect(await prisma.contentEmbedding.findUnique({ where: { kbArticleId: article.id } })).toBeNull();
+
+    await prisma.knowledgeBaseArticle.update({ where: { id: article.id }, data: { status: "PUBLISHED" } });
+    const result = await indexKbArticle(article.id, provider);
+
+    expect(result).toEqual({ indexed: true });
+    expect(await prisma.contentEmbedding.findUnique({ where: { kbArticleId: article.id } })).not.toBeNull();
+  });
+
+  it("stores the exact sha256 hash of the composed content", async () => {
+    const user = await createTestUser("ENGINEER");
+    const article = await createTestArticle(user.id, {
+      status: "PUBLISHED",
+      title: "Hash Test",
+      summary: "Hash summary.",
+      content: "Hash content body.",
+    });
+    const provider = createFakeProvider([1, 0, 0]);
+
+    await indexKbArticle(article.id, provider);
+
+    const expectedContent = "Hash Test\n\nHash summary.\n\nHash content body.";
+    const expectedHash = crypto.createHash("sha256").update(expectedContent).digest("hex");
+    const stored = await prisma.contentEmbedding.findUniqueOrThrow({ where: { kbArticleId: article.id } });
+    expect(stored.content).toBe(expectedContent);
+    expect(stored.contentHash).toBe(expectedHash);
+  });
+
+  it("never creates more than one embedding row for the same article, however many times it is indexed", async () => {
+    const user = await createTestUser("ENGINEER");
+    const article = await createTestArticle(user.id, { status: "PUBLISHED" });
+    const provider = createFakeProvider([1, 0, 0]);
+
+    await indexKbArticle(article.id, provider);
+    await prisma.knowledgeBaseArticle.update({ where: { id: article.id }, data: { summary: "Changed once." } });
+    await indexKbArticle(article.id, provider);
+    await prisma.knowledgeBaseArticle.update({ where: { id: article.id }, data: { summary: "Changed twice." } });
+    await indexKbArticle(article.id, provider);
+
+    const rows = await prisma.contentEmbedding.findMany({ where: { kbArticleId: article.id } });
+    expect(rows).toHaveLength(1);
+  });
+
+  it("the database itself rejects a second embedding row for the same article (unique constraint)", async () => {
+    const user = await createTestUser("ENGINEER");
+    const article = await createTestArticle(user.id, { status: "PUBLISHED" });
+    await prisma.contentEmbedding.create({
+      data: {
+        sourceType: "KB_ARTICLE",
+        kbArticleId: article.id,
+        content: "first",
+        contentHash: "hash-1",
+        embedding: [1, 0, 0],
+        model: "fake",
+        dimensions: 3,
+      },
+    });
+
+    await expect(
+      prisma.contentEmbedding.create({
+        data: {
+          sourceType: "KB_ARTICLE",
+          kbArticleId: article.id,
+          content: "second",
+          contentHash: "hash-2",
+          embedding: [0, 1, 0],
+          model: "fake",
+          dimensions: 3,
+        },
+      }),
+    ).rejects.toThrow();
+  });
+
   it("propagates a provider failure rather than swallowing it", async () => {
     const user = await createTestUser("ENGINEER");
     const article = await createTestArticle(user.id, { status: "PUBLISHED" });
@@ -201,6 +286,29 @@ describe("semanticSearch", () => {
     expect(results[2].sourceType).toBe("COMMAND_CATALOG_ENTRY");
     expect(results[0].score).toBeGreaterThan(results[1].score);
     expect(results[1].score).toBeGreaterThan(results[2].score);
+  });
+
+  it("filters to a single source type when requested", async () => {
+    const user = await createTestUser("ADMIN");
+    const article = await createTestArticle(user.id, { status: "PUBLISHED", title: "BGP Article" });
+    const vendor = await createTestVendor();
+    const command = await createTestCommand(user.id, { vendorId: vendor.id, status: "PUBLISHED", title: "BGP Command" });
+    await indexKbArticle(article.id, createFakeProvider([1, 0, 0]));
+    await indexCommand(command.id, createFakeProvider([1, 0, 0]));
+
+    const kbOnly = await semanticSearch("bgp", {
+      provider: createFakeProvider([1, 0, 0]),
+      sourceType: "KB_ARTICLE",
+    });
+    const commandsOnly = await semanticSearch("bgp", {
+      provider: createFakeProvider([1, 0, 0]),
+      sourceType: "COMMAND_CATALOG_ENTRY",
+    });
+    const both = await semanticSearch("bgp", { provider: createFakeProvider([1, 0, 0]) });
+
+    expect(kbOnly.map((r) => r.id)).toEqual([article.id]);
+    expect(commandsOnly.map((r) => r.id)).toEqual([command.id]);
+    expect(both.map((r) => r.id).sort()).toEqual([article.id, command.id].sort());
   });
 
   it("respects the top-K limit", async () => {

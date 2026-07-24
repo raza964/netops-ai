@@ -47,15 +47,19 @@ export async function deleteEmbeddingBySource(ref: EmbeddingSourceRef) {
  * relation, not by trusting the (possibly stale) embedding row alone, so an
  * archived/deleted source can never surface in results even if its
  * embedding row hasn't been cleaned up yet.
+ *
+ * An optional sourceType restricts the candidate set to just KB articles or
+ * just commands (the search page's type filter); omitted, both are searched.
  */
-export async function listSearchableEmbeddings() {
+export async function listSearchableEmbeddings(sourceType?: EmbeddingSourceType) {
+  const eligible = [
+    { kbArticle: { status: "PUBLISHED" as const, deletedAt: null } },
+    { command: { status: "PUBLISHED" as const, deletedAt: null } },
+  ];
+  const OR = sourceType === "KB_ARTICLE" ? [eligible[0]] : sourceType === "COMMAND_CATALOG_ENTRY" ? [eligible[1]] : eligible;
+
   return prisma.contentEmbedding.findMany({
-    where: {
-      OR: [
-        { kbArticle: { status: "PUBLISHED", deletedAt: null } },
-        { command: { status: "PUBLISHED", deletedAt: null } },
-      ],
-    },
+    where: { OR },
     select: {
       embedding: true,
       kbArticle: { select: { id: true, title: true, summary: true } },

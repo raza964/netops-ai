@@ -87,6 +87,33 @@ describe("KB article actions drive the embedding lifecycle", () => {
     expect(voyageEmbeddingProvider.embedDocument).toHaveBeenCalledTimes(1);
   });
 
+  it("does not reindex when an update resubmits identical content", async () => {
+    const admin = await createTestUser("ADMIN");
+    const article = await createTestArticle(admin.id, {
+      status: "PUBLISHED",
+      title: "Stable Title",
+      summary: "Stable summary text here.",
+      content: "Stable content body here.",
+    });
+    asUser(admin);
+    await publishArticleAction(article.id);
+    expect(voyageEmbeddingProvider.embedDocument).toHaveBeenCalledTimes(1);
+
+    await expect(
+      updateArticleAction(
+        article.id,
+        undefined,
+        articleFormData({
+          title: "Stable Title",
+          summary: "Stable summary text here.",
+          content: "Stable content body here.",
+        }),
+      ),
+    ).rejects.toEqual(redirectingTo(`/kb/${article.id}`));
+
+    expect(voyageEmbeddingProvider.embedDocument).toHaveBeenCalledTimes(1);
+  });
+
   it("does not index on update while the article is still DRAFT", async () => {
     const engineer = await createTestUser("ENGINEER");
     const article = await createTestArticle(engineer.id, { status: "DRAFT" });
@@ -157,6 +184,35 @@ describe("Command Catalog actions drive the embedding lifecycle", () => {
 
     await expect(
       updateCommandAction(command.id, undefined, commandFormData(vendor.id, { title: "Changed Command" })),
+    ).rejects.toEqual(redirectingTo(`/commands/${command.id}`));
+
+    expect(voyageEmbeddingProvider.embedDocument).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not reindex when an update resubmits identical content", async () => {
+    const admin = await createTestUser("ADMIN");
+    const vendor = await createTestVendor();
+    const command = await createTestCommand(admin.id, {
+      vendorId: vendor.id,
+      status: "PUBLISHED",
+      title: "Stable Command",
+      commandText: "show version",
+      description: "Stable description text here.",
+    });
+    asUser(admin);
+    await publishCommandAction(command.id);
+    expect(voyageEmbeddingProvider.embedDocument).toHaveBeenCalledTimes(1);
+
+    await expect(
+      updateCommandAction(
+        command.id,
+        undefined,
+        commandFormData(vendor.id, {
+          title: "Stable Command",
+          commandText: "show version",
+          description: "Stable description text here.",
+        }),
+      ),
     ).rejects.toEqual(redirectingTo(`/commands/${command.id}`));
 
     expect(voyageEmbeddingProvider.embedDocument).toHaveBeenCalledTimes(1);

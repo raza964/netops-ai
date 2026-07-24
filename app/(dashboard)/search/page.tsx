@@ -2,7 +2,7 @@ import Link from "next/link";
 import { getCurrentUser } from "@/lib/dal";
 import { semanticSearch } from "@/lib/embeddings/search";
 import { EmbeddingProviderError } from "@/lib/embeddings/provider";
-import { semanticSearchSchema } from "@/lib/validation/search";
+import { searchSourceTypeValues, semanticSearchSchema } from "@/lib/validation/search";
 import type { SemanticSearchResult } from "@/lib/embeddings/search";
 
 const sourceLabel: Record<SemanticSearchResult["sourceType"], string> = {
@@ -26,15 +26,16 @@ export default async function SearchPage({
   await getCurrentUser();
   const rawParams = await searchParams;
 
-  const parsed = semanticSearchSchema.safeParse({ q: rawParams.q, limit: rawParams.limit });
+  const parsed = semanticSearchSchema.safeParse({ q: rawParams.q, limit: rawParams.limit, type: rawParams.type });
   const query = typeof rawParams.q === "string" ? rawParams.q : "";
+  const typeFilter = typeof rawParams.type === "string" ? rawParams.type : "";
 
   let results: SemanticSearchResult[] = [];
   let error: string | null = null;
 
   if (parsed.success) {
     try {
-      results = await semanticSearch(parsed.data.q, { limit: parsed.data.limit });
+      results = await semanticSearch(parsed.data.q, { limit: parsed.data.limit, sourceType: parsed.data.type });
     } catch (cause) {
       error =
         cause instanceof EmbeddingProviderError
@@ -58,6 +59,18 @@ export default async function SearchPage({
           placeholder="e.g. BGP session keeps flapping after an MTU change"
           className="min-w-[20rem] flex-1 rounded-md border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
         />
+        <select
+          name="type"
+          defaultValue={typeFilter}
+          className="rounded-md border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
+        >
+          <option value="">All types</option>
+          {searchSourceTypeValues.map((value) => (
+            <option key={value} value={value}>
+              {sourceLabel[value]}
+            </option>
+          ))}
+        </select>
         <button
           type="submit"
           className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white dark:bg-zinc-50 dark:text-zinc-900"
