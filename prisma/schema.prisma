@@ -3,9 +3,12 @@
 // Phase 2: case management core (TroubleshootingCase, TroubleshootingStep, AuditLog).
 // Phase 3: knowledge base (KnowledgeBaseArticle), optionally linked back to the
 // case it was authored from.
+// Phase 4: command catalog (CommandCatalogEntry), a searchable reference of
+// vendor/device/technology-scoped commands. TroubleshootingStep carries an
+// optional link to a catalog entry, ready for a later phase to wire up.
 //
-// Not in scope yet (added in later phases): CommandCatalogEntry, vector/embedding
-// tables, AI-generated step content (fields are present and ready, but nothing
+// Not in scope yet (added in later phases): vector/embedding tables,
+// AI-generated step content (fields are present and ready, but nothing
 // populates them yet).
 
 generator client {
@@ -59,6 +62,19 @@ enum ArticleStatus {
   ARCHIVED
 }
 
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum CommandStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
 model User {
   id           String   @id @default(cuid())
   name         String
@@ -75,6 +91,8 @@ model User {
   auditLogs       AuditLog[]
   createdArticles KnowledgeBaseArticle[] @relation("ArticleCreatedBy")
   updatedArticles KnowledgeBaseArticle[] @relation("ArticleUpdatedBy")
+  createdCommands CommandCatalogEntry[]  @relation("CommandCreatedBy")
+  updatedCommands CommandCatalogEntry[]  @relation("CommandUpdatedBy")
 }
 
 model Vendor {
@@ -85,6 +103,7 @@ model Vendor {
   deviceTypes DeviceType[]
   cases       TroubleshootingCase[]
   articles    KnowledgeBaseArticle[]
+  commands    CommandCatalogEntry[]
 }
 
 model DeviceType {
@@ -94,6 +113,7 @@ model DeviceType {
   vendor    Vendor                @relation(fields: [vendorId], references: [id], onDelete: Cascade)
   createdAt DateTime              @default(now())
   cases     TroubleshootingCase[]
+  commands  CommandCatalogEntry[]
 
   @@unique([vendorId, name])
 }
@@ -105,6 +125,7 @@ model Technology {
   createdAt DateTime               @default(now())
   cases     TroubleshootingCase[]
   articles  KnowledgeBaseArticle[]
+  commands  CommandCatalogEntry[]
 }
 
 model TroubleshootingCase {
@@ -166,11 +187,17 @@ model TroubleshootingStep {
   recommendedNextStep String?
   aiModel             String?
 
+  // Optional link to the catalog entry this COMMAND step's command came
+  // from. Schema-ready for Phase 4; no UI wires this up yet.
+  commandCatalogEntryId String?
+  commandCatalogEntry   CommandCatalogEntry? @relation(fields: [commandCatalogEntryId], references: [id])
+
   performedById String
   performedBy   User     @relation("StepPerformedBy", fields: [performedById], references: [id])
   createdAt     DateTime @default(now())
 
   @@index([caseId])
+  @@index([commandCatalogEntryId])
 }
 
 model AuditLog {
@@ -221,4 +248,47 @@ model KnowledgeBaseArticle {
   @@index([vendorId])
   @@index([technologyId])
   @@index([deletedAt])
+}
+
+model CommandCatalogEntry {
+  id             String  @id @default(cuid())
+  slug           String  @unique
+  title          String
+  commandText    String
+  description    String
+  purpose        String?
+  expectedOutput String?
+
+  vendorId     String
+  vendor       Vendor      @relation(fields: [vendorId], references: [id])
+  deviceTypeId String?
+  deviceType   DeviceType? @relation(fields: [deviceTypeId], references: [id])
+  technologyId String?
+  technology   Technology? @relation(fields: [technologyId], references: [id])
+
+  riskLevel      RiskLevel     @default(LOW)
+  isConfigChange Boolean       @default(false)
+  status         CommandStatus @default(DRAFT)
+
+  createdById String
+  createdBy   User    @relation("CommandCreatedBy", fields: [createdById], references: [id])
+  updatedById String?
+  updatedBy   User?   @relation("CommandUpdatedBy", fields: [updatedById], references: [id])
+
+  // Soft delete only - see AGENTS.md safety rule on not deleting history
+  // without explicit confirmation.
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  steps TroubleshootingStep[]
+
+  @@index([status])
+  @@index([vendorId])
+  @@index([deviceTypeId])
+  @@index([technologyId])
+  @@index([riskLevel])
+  @@index([deletedAt])
+  @@index([vendorId, deviceTypeId])
 }

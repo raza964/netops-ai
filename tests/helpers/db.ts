@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import type { ArticleStatus, Role } from "@/generated/prisma/client";
+import type { ArticleStatus, CommandStatus, RiskLevel, Role } from "@/generated/prisma/client";
 
 let counter = 0;
 function unique(prefix: string): string {
@@ -10,6 +10,7 @@ function unique(prefix: string): string {
 /** Deletes all rows from every application table, in FK-safe order. */
 export async function resetDatabase() {
   await prisma.knowledgeBaseArticle.deleteMany();
+  await prisma.commandCatalogEntry.deleteMany();
   await prisma.auditLog.deleteMany();
   await prisma.troubleshootingStep.deleteMany();
   await prisma.troubleshootingCase.deleteMany();
@@ -17,6 +18,14 @@ export async function resetDatabase() {
   await prisma.vendor.deleteMany();
   await prisma.technology.deleteMany();
   await prisma.user.deleteMany();
+}
+
+export async function createTestVendor() {
+  return prisma.vendor.create({ data: { name: unique("Vendor"), slug: unique("vendor") } });
+}
+
+export async function createTestDeviceType(vendorId: string) {
+  return prisma.deviceType.create({ data: { name: unique("Device"), vendorId } });
 }
 
 export async function createTestUser(
@@ -47,6 +56,43 @@ export async function createTestCase(createdById: string) {
       deviceTypeId: deviceType.id,
       technologyId: technology.id,
       severity: "MEDIUM",
+      createdById,
+    },
+  });
+}
+
+export async function createTestCommand(
+  createdById: string,
+  overrides: Partial<{
+    status: CommandStatus;
+    riskLevel: RiskLevel;
+    isConfigChange: boolean;
+    vendorId: string;
+    deviceTypeId: string | null;
+    technologyId: string | null;
+    title: string;
+    commandText: string;
+    description: string;
+    purpose: string | null;
+    expectedOutput: string | null;
+  }> = {},
+) {
+  const vendorId = overrides.vendorId ?? (await createTestVendor()).id;
+  const title = overrides.title ?? unique("Command");
+  return prisma.commandCatalogEntry.create({
+    data: {
+      title,
+      slug: unique("command"),
+      commandText: overrides.commandText ?? "show version",
+      description: overrides.description ?? "Test description, long enough to pass validation.",
+      purpose: overrides.purpose ?? null,
+      expectedOutput: overrides.expectedOutput ?? null,
+      status: overrides.status ?? "DRAFT",
+      riskLevel: overrides.riskLevel ?? "LOW",
+      isConfigChange: overrides.isConfigChange ?? false,
+      vendorId,
+      deviceTypeId: overrides.deviceTypeId ?? null,
+      technologyId: overrides.technologyId ?? null,
       createdById,
     },
   });

@@ -30,6 +30,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
               >
                 Knowledge Base
               </Link>
+              <Link
+                href="/commands"
+                className="text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50"
+              >
+                Commands
+              </Link>
               {user.role === "ADMIN" && (
                 <Link
                   href="/admin"
