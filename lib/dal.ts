@@ -3,7 +3,7 @@ import { cache } from "react";
 import { redirect } from "next/navigation";
 import { auth } from "./auth";
 import { prisma } from "./db";
-import type { Role } from "../generated/prisma/client";
+import type { Role } from "@prisma/client";
 
 /**
  * Verifies the Auth.js JWT and returns the minimal session identity.
