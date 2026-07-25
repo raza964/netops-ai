@@ -46,8 +46,11 @@ Last verified: 2026-07-26
 - Next.js production build: passed in CI.
 - Cloudflare OpenNext production bundle: passed in CI.
 - Cloudflare Worker deployment: active at the temporary workers.dev hostname.
-- Automatic delivery workflow: implemented; awaiting one-time GitHub repository
-  secret configuration before its first production run.
+- Automatic delivery workflow: verified end to end on 2026-07-26; validated
+  `master` commits deploy without Ubuntu-side commands, then pass live liveness
+  and Neon database-readiness checks.
+- Prisma uses the standard client output and OpenNext workerd exports, avoiding
+  runtime WASM compilation that Cloudflare Workers does not permit.
 
 OpenNext's Windows build is not a reliable release signal; the adapter itself
 recommends Linux/WSL. Production and CI use Linux.
@@ -61,12 +64,10 @@ upgrade policy.
 
 ## Production release blockers
 
-1. Add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` as GitHub Actions
-   repository secrets, then verify the first automatic deployment.
-2. Attach `netops.netvorx.pro`, update `AUTH_URL`, and enforce HTTPS.
-3. Enable Cloudflare login/mutation rate limits, WAF rules, preview access
+1. Attach `netops.netvorx.pro`, update `AUTH_URL`, and enforce HTTPS.
+2. Enable Cloudflare login/mutation rate limits, WAF rules, preview access
    control, and alerts.
-4. Complete authenticated production smoke testing and seed the first admin
+3. Complete authenticated production smoke testing and seed the first admin
    through an audited process.
 
 ## Next product phase
