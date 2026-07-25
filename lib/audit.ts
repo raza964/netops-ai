@@ -1,7 +1,7 @@
 import "server-only";
 import { headers } from "next/headers";
 import { prisma } from "./db";
-import type { Prisma } from "../generated/prisma/client";
+import type { Prisma } from "@prisma/client";
 
 export async function recordAudit(input: {
   userId: string;
