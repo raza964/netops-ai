@@ -81,7 +81,6 @@ jobs:
       DATABASE_URL: postgresql://build:build@localhost:5432/build
       AUTH_SECRET: deploy-build-only-secret-at-least-32-characters
       AUTH_URL: https://netops-ai.it-master-c34.workers.dev
-      NODE_ENV: production
 
     steps:
       - name: Verify deployment credentials
@@ -96,10 +95,14 @@ jobs:
           node-version: 22
           cache: npm
 
+      # OpenNext is a development dependency, so dependencies must be installed
+      # before NODE_ENV is narrowed to production for the application build.
       - run: npm ci
       - run: npx prisma generate
       - name: Deploy validated Worker
         run: npm run deploy:cloudflare
+        env:
+          NODE_ENV: production
       - name: Verify production health
         run: |
           curl --fail --show-error --silent --retry 5 --retry-delay 5 \
