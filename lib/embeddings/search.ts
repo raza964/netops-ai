@@ -2,7 +2,7 @@ import "server-only";
 import { listSearchableEmbeddings } from "../data/embeddings";
 import { cosineSimilarity } from "./similarity";
 import { voyageEmbeddingProvider, type EmbeddingProvider } from "./provider";
-import type { EmbeddingSourceType } from "../../generated/prisma/client";
+import type { EmbeddingSourceType } from "@prisma/client";
 
 export type SemanticSearchResult = {
   score: number;
