@@ -37,9 +37,11 @@ Last verified: 2026-07-25
 - ESLint: passed locally.
 - TypeScript: passed locally.
 - Next.js production build: passed locally; 20 application routes generated.
-- Existing Ubuntu gate before Phase 7: 108/108 tests passed.
-- Phase 7 database tests and OpenNext Linux build: enforced by the new CI
-  workflow and must be green before merge.
+- GitHub Actions on Linux: passed.
+- PostgreSQL migrations: passed in CI.
+- Application test suite: 108/108 passed in CI.
+- Next.js production build: passed in CI.
+- Cloudflare OpenNext production bundle: passed in CI.
 
 OpenNext's Windows build is not a reliable release signal; the adapter itself
 recommends Linux/WSL. Production and CI use Linux.
