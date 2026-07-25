@@ -5,6 +5,7 @@ import { getUserByEmail } from "./data/users";
 import { env } from "./env";
 import { verifyPassword } from "./password";
 import { loginSchema } from "./validation/auth";
+import type { Role } from "../generated/prisma/client";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   secret: env.AUTH_SECRET,
@@ -45,8 +46,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       return token;
     },
     session: async ({ session, token }) => {
+      const role = token.role;
+      if (
+        typeof token.id !== "string" ||
+        (role !== "ADMIN" && role !== "ENGINEER" && role !== "VIEWER")
+      ) {
+        throw new Error("Session token is missing a valid user identity.");
+      }
       session.user.id = token.id;
-      session.user.role = token.role;
+      session.user.role = role as Role;
       return session;
     },
   },

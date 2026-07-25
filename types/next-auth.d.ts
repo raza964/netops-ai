@@ -19,7 +19,30 @@ declare module "@auth/core/types" {
   }
 }
 
+// next-auth v5's public callback types are declared through this module in
+// addition to @auth/core. Augment both surfaces so build-time callback types
+// and application session types agree.
+declare module "next-auth" {
+  interface Session {
+    user: {
+      id: string;
+      role: Role;
+    } & DefaultSession["user"];
+  }
+
+  interface User {
+    role: Role;
+  }
+}
+
 declare module "@auth/core/jwt" {
+  interface JWT {
+    id: string;
+    role: Role;
+  }
+}
+
+declare module "next-auth/jwt" {
   interface JWT {
     id: string;
     role: Role;

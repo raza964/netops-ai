@@ -7,6 +7,7 @@ import { NoteStepForm } from "./note-step-form";
 import { StepDecisionButtons } from "./step-decision-buttons";
 import { CaseStatusControls } from "./case-status-controls";
 import { DeleteCaseForm } from "./delete-case-form";
+import { AiAnalysisButton } from "./ai-analysis-button";
 
 export default async function CaseDetailPage({ params }: { params: Promise<{ caseId: string }> }) {
   const { caseId } = await params;
@@ -49,6 +50,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ cas
       </div>
 
       {canAct && <CaseStatusControls caseId={troubleshootingCase.id} status={troubleshootingCase.status} />}
+      {canAddSteps && <AiAnalysisButton caseId={troubleshootingCase.id} />}
 
       {(troubleshootingCase.status === "RESOLVED" || troubleshootingCase.status === "CLOSED") && (
         <div className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
@@ -131,6 +133,23 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ cas
 
               {step.type === "STATUS_CHANGE" && (
                 <p className="mt-2 italic text-zinc-500 dark:text-zinc-400">{step.note}</p>
+              )}
+
+              {step.type === "AI_ANALYSIS" && (
+                <div className="mt-2 rounded-md border border-indigo-200 bg-indigo-50 p-3 dark:border-indigo-900 dark:bg-indigo-950/40">
+                  <p className="whitespace-pre-wrap text-zinc-700 dark:text-zinc-300">{step.aiAnalysis}</p>
+                  <p className="mt-2 text-xs text-zinc-500">AI model: {step.aiModel}</p>
+                </div>
+              )}
+
+              {step.type === "NEXT_STEP_RECOMMENDATION" && (
+                <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900 dark:bg-emerald-950/40">
+                  <p className="font-medium text-emerald-900 dark:text-emerald-200">Recommended next step</p>
+                  <p className="mt-1 whitespace-pre-wrap text-zinc-700 dark:text-zinc-300">
+                    {step.recommendedNextStep}
+                  </p>
+                  <p className="mt-2 text-xs text-zinc-500">AI model: {step.aiModel}</p>
+                </div>
               )}
             </li>
           ))}

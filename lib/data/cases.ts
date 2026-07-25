@@ -94,6 +94,36 @@ export async function addNoteStep(input: { caseId: string; note: string; perform
   });
 }
 
+export async function addAiAnalysisSteps(input: {
+  caseId: string;
+  analysis: string;
+  recommendedNextStep: string;
+  aiModel: string;
+  performedById: string;
+}) {
+  return prisma.$transaction(async (tx) => {
+    const analysisStep = await tx.troubleshootingStep.create({
+      data: {
+        caseId: input.caseId,
+        type: "AI_ANALYSIS",
+        aiAnalysis: input.analysis,
+        aiModel: input.aiModel,
+        performedById: input.performedById,
+      },
+    });
+    const recommendationStep = await tx.troubleshootingStep.create({
+      data: {
+        caseId: input.caseId,
+        type: "NEXT_STEP_RECOMMENDATION",
+        recommendedNextStep: input.recommendedNextStep,
+        aiModel: input.aiModel,
+        performedById: input.performedById,
+      },
+    });
+    return { analysisStep, recommendationStep };
+  });
+}
+
 export async function getStep(stepId: string) {
   return prisma.troubleshootingStep.findUnique({
     where: { id: stepId },
