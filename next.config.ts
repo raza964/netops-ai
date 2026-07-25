@@ -18,6 +18,11 @@ const contentSecurityPolicy = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // Next's Node file tracer selects pg-cloudflare's default (empty) export.
+  // OpenNext later bundles with the workerd condition, which requires this file.
+  outputFileTracingIncludes: {
+    "/*": ["./node_modules/pg-cloudflare/dist/index.js"],
+  },
   async headers() {
     return [
       {
