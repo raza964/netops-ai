@@ -18,6 +18,9 @@ const contentSecurityPolicy = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // OpenNext must resolve Prisma's workerd-specific exports instead of
+  // bundling the Node.js client, which dynamically compiles WASM at runtime.
+  serverExternalPackages: ["@prisma/client", ".prisma/client"],
   // Next's Node file tracer selects pg-cloudflare's default (empty) export.
   // OpenNext later bundles with the workerd condition, which requires this file.
   outputFileTracingIncludes: {

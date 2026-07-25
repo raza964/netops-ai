@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "../db";
-import type { CaseStatus, Severity } from "../../generated/prisma/client";
+import type { CaseStatus, Severity } from "@prisma/client";
 
 export type CaseListFilter = {
   status?: CaseStatus;

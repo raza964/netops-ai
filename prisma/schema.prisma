@@ -17,9 +17,7 @@
 // are present and ready on TroubleshootingStep, but nothing populates them yet).
 
 generator client {
-  provider     = "prisma-client"
-  output       = "../generated/prisma"
-  moduleFormat = "cjs"
+  provider = "prisma-client-js"
 }
 
 datasource db {

@@ -1,6 +1,6 @@
 import "dotenv/config";
 import bcrypt from "bcryptjs";
-import { Role } from "../generated/prisma/client";
+import { Role } from "@prisma/client";
 import { prisma } from "../lib/db";
 
 const SALT_ROUNDS = 12;

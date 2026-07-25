@@ -3,7 +3,7 @@ import { getCurrentUser } from "@/lib/dal";
 import { listArticles } from "@/lib/data/kb";
 import { getVendorsWithDeviceTypes, getTechnologies } from "@/lib/data/reference";
 import { articleFilterSchema, articleStatusValues } from "@/lib/validation/kb";
-import type { ArticleStatus } from "@/generated/prisma/client";
+import type { ArticleStatus } from "@prisma/client";
 
 export default async function KnowledgeBasePage({
   searchParams,

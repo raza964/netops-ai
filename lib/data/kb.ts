@@ -1,7 +1,7 @@
 import "server-only";
 import { prisma } from "../db";
 import { slugify } from "../slug";
-import type { ArticleStatus } from "../../generated/prisma/client";
+import type { ArticleStatus } from "@prisma/client";
 
 export type ArticleListFilter = {
   // Caller decides which statuses are visible for the current role (e.g. a

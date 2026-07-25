@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "../db";
-import type { EmbeddingSourceType } from "../../generated/prisma/client";
+import type { EmbeddingSourceType } from "@prisma/client";
 
 export type EmbeddingSourceRef = { kbArticleId: string } | { commandId: string };
 

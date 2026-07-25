@@ -3,7 +3,7 @@ import { getCurrentUser } from "@/lib/dal";
 import { listCommands } from "@/lib/data/commands";
 import { getVendorsWithDeviceTypes, getTechnologies } from "@/lib/data/reference";
 import { commandFilterSchema, commandStatusValues, riskLevelValues } from "@/lib/validation/command";
-import type { CommandStatus } from "@/generated/prisma/client";
+import type { CommandStatus } from "@prisma/client";
 
 const riskBadgeClass: Record<string, string> = {
   LOW: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",

@@ -5,7 +5,7 @@ import { getUserByEmail } from "./data/users";
 import { env } from "./env";
 import { verifyPassword } from "./password";
 import { loginSchema } from "./validation/auth";
-import type { Role } from "../generated/prisma/client";
+import type { Role } from "@prisma/client";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   secret: env.AUTH_SECRET,
