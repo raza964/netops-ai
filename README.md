@@ -1,40 +1,61 @@
 # NetOps AI
 
-An authenticated network-operations workspace for case management, knowledge capture, command reference, semantic search, and audited AI-assisted troubleshooting.
+Authenticated network-operations workspace for case management, knowledge
+capture, command reference, semantic search, and audited AI-assisted
+troubleshooting.
 
-See [PROJECT_STATE.md](PROJECT_STATE.md) for the verified phase status.
+## Capabilities
 
-## Getting Started
+- Auth.js credentials authentication with database-backed RBAC
+- Troubleshooting cases, timeline, approvals, and audit logging
+- Knowledge base and vendor-aware command catalog
+- Provider-agnostic semantic search
+- Advisory AI case analysis that never executes commands
+- Cloudflare Workers deployment through OpenNext
 
-First, run the development server:
+See [PROJECT_STATE.md](PROJECT_STATE.md) for verified phase status,
+[SECURITY.md](SECURITY.md) for security policy, and
+[DEPLOYMENT.md](DEPLOYMENT.md) for the production runbook.
+
+## Local setup
+
+Requirements: Node.js 22 and PostgreSQL.
 
 ```bash
+cp .env.example .env
+npm ci
+npx prisma generate
+npx prisma migrate deploy
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Seed only a non-production database when development reference data is needed:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npx prisma db seed
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Validation
 
-## Learn More
+Use a dedicated PostgreSQL test database whose name contains `_test`, configured
+in `.env.test`.
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm run validate
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+The GitHub Actions gate repeats dependency installation, migrations, lint, type
+checking, all database tests, the Next.js production build, and the Cloudflare
+OpenNext build.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Cloudflare
 
-## Deploy on Vercel
+```bash
+cp .dev.vars.example .dev.vars
+npm run preview:cloudflare
+npm run upload:cloudflare
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Do not deploy this application as a static Pages site. Its authentication,
+Server Actions, PostgreSQL access, and AI integrations require the Cloudflare
+Workers/OpenNext runtime.

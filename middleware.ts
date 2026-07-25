@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-// Optimistic, cookie-presence-only checks - never a database call here.
-// Real authorization happens in the DAL (lib/dal.ts), which every
-// protected Server Component/Action/Route Handler calls independently.
+// Cloudflare/OpenNext does not support Next.js 16's Node-only proxy.ts.
+// This lightweight optimistic gate deliberately stays in Edge Middleware.
+// Real authentication and authorization always run in lib/dal.ts.
 const PROTECTED_PREFIXES = ["/dashboard", "/admin"];
 const SESSION_COOKIE_NAMES = ["authjs.session-token", "__Secure-authjs.session-token"];
 
@@ -11,7 +11,7 @@ function hasSessionCookie(request: NextRequest): boolean {
   return SESSION_COOKIE_NAMES.some((name) => request.cookies.has(name));
 }
 
-export function proxy(request: NextRequest) {
+export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isProtectedRoute = PROTECTED_PREFIXES.some((prefix) => pathname.startsWith(prefix));
   const isLoginPage = pathname === "/login";

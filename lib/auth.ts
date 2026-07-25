@@ -9,7 +9,15 @@ import type { Role } from "../generated/prisma/client";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   secret: env.AUTH_SECRET,
-  session: { strategy: "jwt" },
+  // The production app is served behind Cloudflare. Authorization never trusts
+  // the Host header or JWT role alone; the DAL re-reads the user on each
+  // protected request.
+  trustHost: true,
+  session: {
+    strategy: "jwt",
+    maxAge: 8 * 60 * 60,
+    updateAge: 60 * 60,
+  },
   pages: { signIn: "/login" },
   providers: [
     Credentials({
