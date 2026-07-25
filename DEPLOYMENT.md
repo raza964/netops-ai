@@ -14,50 +14,57 @@ OpenNext adapter**, not as a static Cloudflare Pages site.
 Use a managed PostgreSQL provider with TLS, connection pooling, automated
 backups, point-in-time recovery, and a region close to the Worker.
 
-## Required secrets
+## Worker secrets
 
-Set secrets with Wrangler; never place real values in `wrangler.jsonc`:
+The deployed Worker must contain these secrets; never place real values in
+`wrangler.jsonc` or Git:
 
-```bash
-npx wrangler secret put DATABASE_URL
-npx wrangler secret put AUTH_SECRET
-```
+- `DATABASE_URL`
+- `AUTH_SECRET`
+- `AUTH_URL`
 
 Optional:
 
-```bash
-npx wrangler secret put VOYAGE_API_KEY
-npx wrangler secret put ANTHROPIC_API_KEY
-```
+- `VOYAGE_API_KEY`
+- `ANTHROPIC_API_KEY`
 
-Set `AUTH_URL=https://netops.netvorx.pro` and `ANTHROPIC_MODEL` as non-secret
-Worker variables (the latter only when overriding the default).
-Generate `AUTH_SECRET` with `openssl rand -base64 32`.
+Set `AUTH_URL=https://netops.netvorx.pro` when the custom domain is active.
 
-## Database release
+## Automatic GitHub deployment
 
-Run migrations from CI or a trusted administration host before deploying:
+Every pull request runs the full validation gate. After a reviewed change is
+merged to `master`, the same gate runs again and the `deploy-production` job:
+
+1. builds the OpenNext Worker,
+2. deploys it to Cloudflare,
+3. verifies `/api/health`, and
+4. verifies database-backed `/api/ready`.
+
+Configure these GitHub Actions repository secrets once:
+
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+
+The Cloudflare token should be narrowly scoped to the NetOps AI Worker and must
+never be printed in logs or shared in issues, pull requests, or chat.
+
+## Database releases
+
+CI validates every migration against PostgreSQL 17. Production migrations must
+run from a trusted release environment before deploying a schema-dependent
+application change. Never run development migrations against production.
+
+A future release workflow may automate production migrations after a dedicated,
+least-privilege Neon migration credential is stored as a protected production
+environment secret.
+
+## Manual emergency deployment
+
+Automatic GitHub deployment is the normal release path. For recovery only:
 
 ```bash
 npm ci
 npx prisma generate
-npx prisma migrate deploy
-```
-
-Never run development migrations against production.
-
-## Validate and deploy
-
-```bash
-npm run validate
-npm run upload:cloudflare
-```
-
-The upload command creates a Worker version without immediately moving
-production traffic. Smoke-test the version, then promote it in Cloudflare.
-For a direct first deployment:
-
-```bash
 npm run deploy:cloudflare
 ```
 
@@ -75,17 +82,10 @@ Before public launch:
 
 ## Smoke tests
 
-After deployment:
-
-```bash
-curl -fsS https://netops.netvorx.pro/api/health
-curl -fsS https://netops.netvorx.pro/api/ready
-curl -I https://netops.netvorx.pro/login
-```
-
-Verify login, RBAC, case creation, approval behavior, semantic search, AI
-analysis, audit logging, sign-out, security headers, and the absence of browser
-console errors.
+The deployment workflow automatically checks liveness and database readiness.
+For a release review, also verify login, RBAC, case creation, approval behavior,
+semantic search, AI analysis, audit logging, sign-out, security headers, and the
+absence of browser console errors.
 
 ## Rollback
 

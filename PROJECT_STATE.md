@@ -1,6 +1,6 @@
 # NetOps AI Project State
 
-Last verified: 2026-07-25
+Last verified: 2026-07-26
 
 ## Completed phases
 
@@ -10,7 +10,8 @@ Last verified: 2026-07-25
 - Phase 4: Command catalog.
 - Phase 5: Semantic search foundation with provider abstraction and lifecycle tests.
 - Phase 6: Audited, advisory AI-assisted case analysis and next-step recommendations.
-- Phase 7: Production security, CI, health checks, and Cloudflare Workers deployment foundation.
+- Phase 7: Production security, CI, health checks, Cloudflare Workers deployment,
+  and automatic GitHub delivery foundation.
 
 ## Phase 7 production work
 
@@ -20,9 +21,13 @@ Last verified: 2026-07-25
 - Eight-hour Auth.js sessions with hourly rotation; active status and roles are
   still re-read from PostgreSQL on protected requests.
 - Public liveness and database-backed readiness endpoints with no-store
-  responses and non-sensitive error output.
+  responses and non-sensitive public errors plus sanitized server logging.
+- Neon production connections use Prisma's official serverless adapter; local
+  development and CI retain the standard PostgreSQL adapter.
 - GitHub Actions validation with PostgreSQL 17, locked installation, migrations,
   lint, type checking, 108 application tests, Next.js build, and OpenNext build.
+- Validated `master` commits automatically deploy to Cloudflare and must pass
+  post-deployment liveness and database-readiness smoke checks.
 - Reproducible Cloudflare Workers/OpenNext configuration with pinned adapter and
   Wrangler versions.
 - Edge Middleware for the cookie-only optimistic route gate, keeping database
@@ -33,15 +38,16 @@ Last verified: 2026-07-25
 
 ## Verification status
 
-- Prisma Client generation: passed locally.
-- ESLint: passed locally.
-- TypeScript: passed locally.
-- Next.js production build: passed locally; 20 application routes generated.
-- GitHub Actions on Linux: passed.
+- Prisma Client generation: passed in CI.
+- ESLint: passed in CI.
+- TypeScript: passed in CI.
 - PostgreSQL migrations: passed in CI.
 - Application test suite: 108/108 passed in CI.
 - Next.js production build: passed in CI.
 - Cloudflare OpenNext production bundle: passed in CI.
+- Cloudflare Worker deployment: active at the temporary workers.dev hostname.
+- Automatic delivery workflow: implemented; awaiting one-time GitHub repository
+  secret configuration before its first production run.
 
 OpenNext's Windows build is not a reliable release signal; the adapter itself
 recommends Linux/WSL. Production and CI use Linux.
@@ -55,15 +61,13 @@ upgrade policy.
 
 ## Production release blockers
 
-These are infrastructure actions, not missing application code:
-
-1. Provision production PostgreSQL with TLS, pooling, backups, and
-   point-in-time recovery.
-2. Configure Cloudflare Worker secrets and the production hostname.
+1. Add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` as GitHub Actions
+   repository secrets, then verify the first automatic deployment.
+2. Attach `netops.netvorx.pro`, update `AUTH_URL`, and enforce HTTPS.
 3. Enable Cloudflare login/mutation rate limits, WAF rules, preview access
    control, and alerts.
-4. Run the first migration, deploy a Worker version, complete smoke tests, and
-   promote it.
+4. Complete authenticated production smoke testing and seed the first admin
+   through an audited process.
 
 ## Next product phase
 
