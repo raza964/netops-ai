@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+// Next.js 16 defaults Proxy to the Node.js runtime. OpenNext for Cloudflare
+// requires Edge Proxy; this module intentionally uses only Web/Next APIs.
+export const runtime = "edge";
+
 // Optimistic, cookie-presence-only checks - never a database call here.
 // Real authorization happens in the DAL (lib/dal.ts), which every
 // protected Server Component/Action/Route Handler calls independently.

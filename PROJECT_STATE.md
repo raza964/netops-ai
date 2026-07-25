@@ -25,6 +25,8 @@ Last verified: 2026-07-25
   lint, type checking, 108 application tests, Next.js build, and OpenNext build.
 - Reproducible Cloudflare Workers/OpenNext configuration with pinned adapter and
   Wrangler versions.
+- Explicit Edge runtime for the cookie-only Next.js Proxy, keeping database
+  authorization in server-side DAL code.
 - Production deployment, secret management, rollback, dependency-advisory, and
   security documentation.
 
