@@ -11,7 +11,7 @@ Last verified: 2026-07-26
 - Phase 5: Semantic search foundation with provider abstraction and lifecycle tests.
 - Phase 6: Audited, advisory AI-assisted case analysis and next-step recommendations.
 - Phase 7: Production security, CI, health checks, Cloudflare Workers deployment,
-  and automatic GitHub delivery foundation.
+  custom-domain release, and automatic GitHub delivery foundation.
 
 ## Phase 7 production work
 
@@ -24,10 +24,14 @@ Last verified: 2026-07-26
   responses and non-sensitive public errors plus sanitized server logging.
 - Neon production connections use Prisma's official serverless adapter; local
   development and CI retain the standard PostgreSQL adapter.
+- Production Prisma clients are isolated per ORM operation and disconnected
+  after completion so Cloudflare request-bound native I/O is never reused by a
+  later Worker request.
 - GitHub Actions validation with PostgreSQL 17, locked installation, migrations,
   lint, type checking, 108 application tests, Next.js build, and OpenNext build.
 - Validated `master` commits automatically deploy to Cloudflare and must pass
-  post-deployment liveness and database-readiness smoke checks.
+  post-deployment liveness and database-readiness smoke checks on the custom
+  production domain.
 - Reproducible Cloudflare Workers/OpenNext configuration with pinned adapter and
   Wrangler versions.
 - Edge Middleware for the cookie-only optimistic route gate, keeping database
@@ -45,12 +49,17 @@ Last verified: 2026-07-26
 - Application test suite: 108/108 passed in CI.
 - Next.js production build: passed in CI.
 - Cloudflare OpenNext production bundle: passed in CI.
-- Cloudflare Worker deployment: active at the temporary workers.dev hostname.
+- Cloudflare Worker deployment: active at `https://netops.netvorx.pro`.
 - Automatic delivery workflow: verified end to end on 2026-07-26; validated
   `master` commits deploy without Ubuntu-side commands, then pass live liveness
-  and Neon database-readiness checks.
+  and Neon database-readiness checks on the custom domain.
 - Prisma uses the standard client output and OpenNext workerd exports, avoiding
   runtime WASM compilation that Cloudflare Workers does not permit.
+- Cloudflare custom domain and HTTPS: active and verified.
+- First production administrator: created directly in the production database
+  with a bcrypt password hash; role and active status verified.
+- Authenticated smoke test: sign-out, fresh credential sign-in, dashboard,
+  cases, knowledge base, command catalog, and admin routes passed on 2026-07-26.
 
 OpenNext's Windows build is not a reliable release signal; the adapter itself
 recommends Linux/WSL. Production and CI use Linux.
@@ -62,13 +71,16 @@ published advisories. `npm audit fix --force` proposes breaking framework/ORM
 downgrades and must not be used. See `SECURITY.md` for exposure controls and the
 upgrade policy.
 
-## Production release blockers
+## Remaining production hardening
 
-1. Attach `netops.netvorx.pro`, update `AUTH_URL`, and enforce HTTPS.
-2. Enable Cloudflare login/mutation rate limits, WAF rules, preview access
-   control, and alerts.
-3. Complete authenticated production smoke testing and seed the first admin
-   through an audited process.
+1. Enable Cloudflare login/mutation rate limits and WAF rules.
+2. Restrict Worker preview URLs with Cloudflare Access or disable previews when
+   the release workflow no longer needs them.
+3. Configure Cloudflare error-rate, availability, and security alerts.
+
+These are platform hardening tasks rather than application release blockers;
+the custom-domain production application, database, authentication, CI/CD, and
+health gates are active and verified.
 
 ## Next product phase
 
