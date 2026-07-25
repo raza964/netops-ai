@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import type { ArticleStatus, CommandStatus, RiskLevel, Role } from "@/generated/prisma/client";
+import type { ArticleStatus, CommandStatus, RiskLevel, Role } from "@prisma/client";
 
 let counter = 0;
 function unique(prefix: string): string {
