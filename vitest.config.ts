@@ -2,7 +2,6 @@ import path from "node:path";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
-  assetsInclude: ["**/*.wasm?module"],
   test: {
     environment: "node",
     setupFiles: ["./tests/env.ts", "./tests/setup.ts"],
