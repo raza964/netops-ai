@@ -20,7 +20,6 @@ generator client {
   provider     = "prisma-client"
   output       = "../generated/prisma"
   moduleFormat = "cjs"
-  runtime      = "cloudflare"
 }
 
 datasource db {
