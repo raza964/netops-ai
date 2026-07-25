@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { requireRole } from "@/lib/dal";
 import { recordAudit } from "@/lib/audit";
 import {
+  addAiAnalysisSteps,
   addCommandStep,
   addNoteStep,
   changeCaseStatus,
@@ -14,6 +15,8 @@ import {
   resolveCase,
   softDeleteCase,
 } from "@/lib/data/cases";
+import { analyzeCase } from "@/lib/ai/case-analysis";
+import { AiProviderError } from "@/lib/ai/provider";
 import { addCommandStepSchema, addNoteStepSchema, deleteCaseSchema, resolveCaseSchema } from "@/lib/validation/case";
 
 export async function addCommandStepAction(caseId: string, _prevState: string | undefined, formData: FormData) {
@@ -67,6 +70,39 @@ export async function addNoteStepAction(caseId: string, _prevState: string | und
   });
 
   revalidatePath(`/cases/${caseId}`);
+}
+
+export async function generateAiAnalysisAction(caseId: string): Promise<string | undefined> {
+  const user = await requireRole(["ENGINEER", "ADMIN"]);
+  const troubleshootingCase = await getCaseDetail(caseId);
+  if (!troubleshootingCase) return "Case not found.";
+  if (troubleshootingCase.status === "CLOSED") return "Closed cases cannot be analyzed.";
+
+  try {
+    const result = await analyzeCase(troubleshootingCase);
+    const steps = await addAiAnalysisSteps({
+      caseId,
+      analysis: result.analysis,
+      recommendedNextStep: result.recommendedNextStep,
+      aiModel: result.model,
+      performedById: user.id,
+    });
+    await recordAudit({
+      userId: user.id,
+      action: "case.ai_analysis_generated",
+      entityType: "TroubleshootingCase",
+      entityId: caseId,
+      metadata: {
+        model: result.model,
+        analysisStepId: steps.analysisStep.id,
+        recommendationStepId: steps.recommendationStep.id,
+      },
+    });
+    revalidatePath(`/cases/${caseId}`);
+  } catch (error) {
+    if (error instanceof AiProviderError) return error.message;
+    throw error;
+  }
 }
 
 export async function decideStepAction(caseId: string, stepId: string, decision: "APPROVED" | "REJECTED") {

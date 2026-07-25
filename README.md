@@ -1,4 +1,8 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# NetOps AI
+
+An authenticated network-operations workspace for case management, knowledge capture, command reference, semantic search, and audited AI-assisted troubleshooting.
+
+See [PROJECT_STATE.md](PROJECT_STATE.md) for the verified phase status.
 
 ## Getting Started
 
