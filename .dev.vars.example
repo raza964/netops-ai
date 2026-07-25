@@ -1,0 +1,5 @@
+# Copy to .dev.vars for `npm run preview:cloudflare`. Never commit real values.
+NEXTJS_ENV=development
+DATABASE_URL=postgresql://user:password@localhost:5432/netops_ai?schema=public
+AUTH_SECRET=replace-with-at-least-32-random-characters
+AUTH_URL=http://localhost:8787
