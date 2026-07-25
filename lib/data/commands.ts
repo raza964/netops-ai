@@ -1,7 +1,7 @@
 import "server-only";
 import { prisma } from "../db";
 import { slugify } from "../slug";
-import type { CommandStatus, RiskLevel } from "../../generated/prisma/client";
+import type { CommandStatus, RiskLevel } from "@prisma/client";
 
 export type CommandListFilter = {
   // Caller decides which statuses are visible for the current role (e.g. a
