@@ -1,5 +1,5 @@
 import type { DefaultSession } from "next-auth";
-import type { Role } from "../generated/prisma/client";
+import type { Role } from "@prisma/client";
 
 // `next-auth` and `next-auth/jwt` re-export their `Session`/`User`/`JWT`
 // types from `@auth/core` rather than declaring them locally, so module
