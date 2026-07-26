@@ -36,49 +36,55 @@ function articleContent(file: KbImportBatch["files"][number], collection: KbImpo
 }
 
 export async function importKnowledgeBatch(input: KbImportBatch, createdById: string): Promise<ImportResult> {
+  const prepared = input.files.map((file) => ({
+    file,
+    slug: articleSlug(file.name, file.sha256),
+    data: {
+      title: input.collection === "RESTRICTED_OPERATIONS" ? `[RESTRICTED] ${file.name}` : file.name,
+      summary: articleSummary(file, input.collection),
+      content: articleContent(file, input.collection),
+      status: "DRAFT" as const,
+      deletedAt: null,
+    },
+  }));
+  const existing = await prisma.knowledgeBaseArticle.findMany({
+    where: { slug: { in: prepared.map((article) => article.slug) } },
+    select: { id: true, slug: true },
+  });
+  const existingBySlug = new Map(existing.map((article) => [article.slug, article.id]));
+  const settled = await Promise.allSettled(
+    prepared.map((article) => {
+      const existingId = existingBySlug.get(article.slug);
+      return existingId
+        ? prisma.knowledgeBaseArticle.update({
+            where: { id: existingId },
+            data: { ...article.data, updatedById: createdById },
+          })
+        : prisma.knowledgeBaseArticle.create({
+            data: {
+              ...article.data,
+              slug: article.slug,
+              vendorId: null,
+              technologyId: null,
+              sourceCaseId: null,
+              createdById,
+            },
+          });
+    }),
+  );
+
   const result: ImportResult = { created: 0, updated: 0, failed: [] };
-
-  for (const file of input.files) {
-    try {
-      const slug = articleSlug(file.name, file.sha256);
-      const existing = await prisma.knowledgeBaseArticle.findUnique({
-        where: { slug },
-        select: { id: true },
-      });
-      const data = {
-        title: input.collection === "RESTRICTED_OPERATIONS" ? `[RESTRICTED] ${file.name}` : file.name,
-        summary: articleSummary(file, input.collection),
-        content: articleContent(file, input.collection),
-        status: "DRAFT" as const,
-        deletedAt: null,
-      };
-
-      if (existing) {
-        await prisma.knowledgeBaseArticle.update({
-          where: { id: existing.id },
-          data: { ...data, updatedById: createdById },
-        });
-        result.updated += 1;
-      } else {
-        await prisma.knowledgeBaseArticle.create({
-          data: {
-            ...data,
-            slug,
-            vendorId: null,
-            technologyId: null,
-            sourceCaseId: null,
-            createdById,
-          },
-        });
-        result.created += 1;
-      }
-    } catch (error) {
+  settled.forEach((outcome, index) => {
+    if (outcome.status === "rejected") {
       result.failed.push({
-        name: file.name,
-        error: error instanceof Error ? error.message : "Unknown import error",
+        name: prepared[index].file.name,
+        error: outcome.reason instanceof Error ? outcome.reason.message : "Unknown import error",
       });
+    } else if (existingBySlug.has(prepared[index].slug)) {
+      result.updated += 1;
+    } else {
+      result.created += 1;
     }
-  }
-
+  });
   return result;
 }
