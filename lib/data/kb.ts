@@ -1,4 +1,4 @@
-﻿import "server-only";
+import "server-only";
 import { prisma } from "../db";
 import { slugify } from "../slug";
 import type { ArticleStatus } from "@prisma/client";
@@ -32,7 +32,7 @@ export async function listArticles(filter: ArticleListFilter) {
           }
         : {}),
   };
-  const [items, total] = await prisma.$transaction([
+  const [items, total] = await Promise.all([
     prisma.knowledgeBaseArticle.findMany({
       where,
       select: {
