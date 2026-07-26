@@ -1,4 +1,4 @@
-import "server-only";
+﻿import "server-only";
 import { prisma } from "../db";
 import { slugify } from "../slug";
 import type { ArticleStatus } from "@prisma/client";
@@ -10,11 +10,14 @@ export type ArticleListFilter = {
   vendorId?: string;
   technologyId?: string;
   query?: string;
+  page?: number;
+  pageSize?: number;
 };
 
 export async function listArticles(filter: ArticleListFilter) {
-  return prisma.knowledgeBaseArticle.findMany({
-    where: {
+  const page = filter.page ?? 1;
+  const pageSize = filter.pageSize ?? 50;
+  const where = {
       deletedAt: null,
       status: { in: filter.statuses },
       ...(filter.vendorId ? { vendorId: filter.vendorId } : {}),
@@ -28,8 +31,11 @@ export async function listArticles(filter: ArticleListFilter) {
             ],
           }
         : {}),
-    },
-    select: {
+  };
+  const [items, total] = await prisma.$transaction([
+    prisma.knowledgeBaseArticle.findMany({
+      where,
+      select: {
       id: true,
       title: true,
       summary: true,
@@ -39,8 +45,13 @@ export async function listArticles(filter: ArticleListFilter) {
       technology: { select: { name: true } },
       createdBy: { select: { name: true } },
     },
-    orderBy: { createdAt: "desc" },
-  });
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    prisma.knowledgeBaseArticle.count({ where }),
+  ]);
+  return { items, total, page, pageSize, pageCount: Math.max(1, Math.ceil(total / pageSize)) };
 }
 
 export async function getArticleDetail(articleId: string) {

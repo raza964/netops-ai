@@ -1,4 +1,4 @@
-name: CI
+﻿name: CI
 
 on:
   push:
@@ -75,6 +75,7 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      KB_IMPORT_TOKEN: ${{ secrets.KB_IMPORT_TOKEN }}
       # OpenNext performs a Next.js build before upload. These non-production
       # values satisfy server environment validation during compilation only;
       # the deployed Worker continues to use its encrypted Cloudflare secrets.
@@ -103,6 +104,9 @@ jobs:
         run: npm run deploy:cloudflare
         env:
           NODE_ENV: production
+      - name: Configure optional knowledge import token
+        if: env.KB_IMPORT_TOKEN != ''
+        run: printf '%s' "$KB_IMPORT_TOKEN" | npx wrangler secret put KB_IMPORT_TOKEN
       - name: Verify production health
         run: |
           curl --fail --show-error --silent --retry 5 --retry-delay 5 \

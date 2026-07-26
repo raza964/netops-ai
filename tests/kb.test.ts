@@ -224,9 +224,9 @@ describe("listArticles search and filtering", () => {
 
     const results = await listArticles({ statuses: ["PUBLISHED"] });
 
-    expect(results.map((article) => article.id)).toContain(published.id);
-    expect(results.map((article) => article.id)).not.toContain(deleted.id);
-    expect(results.every((article) => article.status === "PUBLISHED")).toBe(true);
+    expect(results.items.map((article) => article.id)).toContain(published.id);
+    expect(results.items.map((article) => article.id)).not.toContain(deleted.id);
+    expect(results.items.every((article) => article.status === "PUBLISHED")).toBe(true);
   });
 
   it("matches a search query case-insensitively across title, summary, and content", async () => {
@@ -241,8 +241,8 @@ describe("listArticles search and filtering", () => {
 
     const results = await listArticles({ statuses: ["PUBLISHED"], query: "ospf adjacency" });
 
-    expect(results).toHaveLength(1);
-    expect(results[0]?.id).toBe(match.id);
+    expect(results.items).toHaveLength(1);
+    expect(results.items[0]?.id).toBe(match.id);
   });
 
   it("filters by vendor", async () => {
@@ -253,6 +253,6 @@ describe("listArticles search and filtering", () => {
 
     const results = await listArticles({ statuses: ["PUBLISHED"], vendorId: vendor.id });
 
-    expect(results.map((article) => article.id)).toEqual([matching.id]);
+    expect(results.items.map((article) => article.id)).toEqual([matching.id]);
   });
 });

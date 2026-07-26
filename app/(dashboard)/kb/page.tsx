@@ -1,4 +1,4 @@
-import Link from "next/link";
+﻿import Link from "next/link";
 import { getCurrentUser } from "@/lib/dal";
 import { listArticles } from "@/lib/data/kb";
 import { getVendorsWithDeviceTypes, getTechnologies } from "@/lib/data/reference";
@@ -18,8 +18,9 @@ export default async function KnowledgeBasePage({
     vendorId: rawParams.vendorId,
     technologyId: rawParams.technologyId,
     q: rawParams.q,
+    page: rawParams.page,
   });
-  const filter = filterParsed.success ? filterParsed.data : {};
+  const filter = filterParsed.success ? filterParsed.data : articleFilterSchema.parse({});
 
   const isViewer = user.role === "VIEWER";
   const statuses: ArticleStatus[] = isViewer
@@ -28,14 +29,24 @@ export default async function KnowledgeBasePage({
       ? [filter.status]
       : ["DRAFT", "PUBLISHED", "ARCHIVED"];
 
-  const [articles, vendors, technologies] = await Promise.all([
-    listArticles({ statuses, vendorId: filter.vendorId, technologyId: filter.technologyId, query: filter.q }),
+  const [articleResult, vendors, technologies] = await Promise.all([
+    listArticles({ statuses, vendorId: filter.vendorId, technologyId: filter.technologyId, query: filter.q, page: filter.page }),
     getVendorsWithDeviceTypes(),
     getTechnologies(),
   ]);
 
   const canCreate = user.role === "ADMIN" || user.role === "ENGINEER";
   const canImport = user.role === "ADMIN";
+  const { items: articles, total, page, pageCount } = articleResult;
+  const pageHref = (targetPage: number) => {
+    const params = new URLSearchParams();
+    if (filter.q) params.set("q", filter.q);
+    if (filter.status) params.set("status", filter.status);
+    if (filter.vendorId) params.set("vendorId", filter.vendorId);
+    if (filter.technologyId) params.set("technologyId", filter.technologyId);
+    params.set("page", String(targetPage));
+    return `/kb?${params.toString()}`;
+  };
 
   return (
     <div>
@@ -116,6 +127,10 @@ export default async function KnowledgeBasePage({
         </button>
       </form>
 
+      <p className="mt-4 text-sm text-zinc-500">
+        {total.toLocaleString()} article{total === 1 ? "" : "s"} · Page {page} of {pageCount}
+      </p>
+
       <div className="mt-6 space-y-3">
         {articles.map((article) => (
           <Link
@@ -131,7 +146,7 @@ export default async function KnowledgeBasePage({
             </div>
             <p className="mt-1 line-clamp-2 text-sm text-zinc-600 dark:text-zinc-400">{article.summary}</p>
             <p className="mt-2 text-xs text-zinc-400">
-              {[article.vendor?.name, article.technology?.name].filter(Boolean).join(" · ") || "General"} ·{" "}
+              {[article.vendor?.name, article.technology?.name].filter(Boolean).join(" Â· ") || "General"} Â·{" "}
               {article.createdBy.name}
             </p>
           </Link>
@@ -142,6 +157,17 @@ export default async function KnowledgeBasePage({
           </div>
         )}
       </div>
+
+      {pageCount > 1 && (
+        <nav className="mt-6 flex items-center justify-between text-sm" aria-label="Knowledge base pagination">
+          {page > 1 ? (
+            <Link href={pageHref(page - 1)} className="rounded-md border border-zinc-300 px-3 py-2 dark:border-zinc-700">Previous</Link>
+          ) : <span />}
+          {page < pageCount ? (
+            <Link href={pageHref(page + 1)} className="rounded-md border border-zinc-300 px-3 py-2 dark:border-zinc-700">Next</Link>
+          ) : <span />}
+        </nav>
+      )}
     </div>
   );
 }
