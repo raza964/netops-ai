@@ -1,4 +1,4 @@
-import { z } from "zod";
+﻿import { z } from "zod";
 
 export const articleStatusValues = ["DRAFT", "PUBLISHED", "ARCHIVED"] as const;
 
@@ -23,6 +23,7 @@ export const articleFilterSchema = z.object({
   vendorId: z.string().optional(),
   technologyId: z.string().optional(),
   q: z.string().trim().max(200).optional(),
+  page: z.coerce.number().int().min(1).default(1),
 });
 
 export const deleteArticleSchema = z.object({
