@@ -5,8 +5,18 @@ import { useMemo, useState } from "react";
 type Collection = "LECTURE" | "CHAT" | "RESTRICTED_OPERATIONS";
 type Sensitivity = "STANDARD" | "MEDIUM" | "HIGH";
 type Totals = { created: number; updated: number; failed: Array<{ name: string; error: string }> };
+type PreparedFile = {
+  name: string;
+  relativePath: string;
+  content: string;
+  sha256: string;
+  category: string;
+  sensitivity: Sensitivity;
+};
 
 const BATCH_SIZE = 20;
+const MAX_BATCH_BYTES = 4_500_000;
+const folderInputProps = { webkitdirectory: "", directory: "" } as Record<string, string>;
 
 async function sha256(text: string): Promise<string> {
   const bytes = new TextEncoder().encode(text);
@@ -14,23 +24,57 @@ async function sha256(text: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+function relativePath(file: File): string {
+  return (file.webkitRelativePath || file.name).replace(/\\/g, "/");
+}
+
 function inferCategory(file: File): string {
-  const relativePath = file.webkitRelativePath || file.name;
-  const parts = relativePath.split("/");
+  const parts = relativePath(file).split("/").filter(Boolean);
   return parts.length > 1 ? parts.at(-2) || "uncategorized" : "uncategorized";
 }
 
 function inferSensitivity(collection: Collection, file: File): Sensitivity {
+  const path = relativePath(file);
   if (collection === "RESTRICTED_OPERATIONS") return "HIGH";
-  if (/(password|credential|secret|token|login|private.?key)/i.test(file.name)) return "HIGH";
-  if (/(config|vpn|ssh|radius|firewall|router|switch|client|payment)/i.test(file.name)) return "MEDIUM";
+  if (/(password|credential|secret|token|login|private.?key)/i.test(path)) return "HIGH";
+  if (/(config|vpn|ssh|radius|firewall|router|switch|client|payment)/i.test(path)) return "MEDIUM";
   return "STANDARD";
+}
+
+function mergeFiles(current: File[], incoming: File[]): File[] {
+  const merged = new Map(current.map((file) => [`${relativePath(file)}:${file.size}:${file.lastModified}`, file]));
+  for (const file of incoming) {
+    if (/\.md$/i.test(file.name)) merged.set(`${relativePath(file)}:${file.size}:${file.lastModified}`, file);
+  }
+  return [...merged.values()].sort((a, b) => relativePath(a).localeCompare(relativePath(b)));
+}
+
+async function postBatch(collection: Collection, files: PreparedFile[]): Promise<Totals> {
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    const response = await fetch("/api/kb/import", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ collection, files }),
+    });
+    const body = (await response.json()) as Partial<Totals> & { error?: string };
+    if (response.ok || response.status === 207) {
+      return { created: body.created ?? 0, updated: body.updated ?? 0, failed: body.failed ?? [] };
+    }
+    if ((response.status !== 429 && response.status < 500) || attempt === 4) {
+      throw new Error(body.error || `Import failed with HTTP ${response.status}.`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+  }
+  throw new Error("Import retry limit reached.");
 }
 
 export function KnowledgeImportClient() {
   const [collection, setCollection] = useState<Collection>("LECTURE");
   const [files, setFiles] = useState<File[]>([]);
   const [running, setRunning] = useState(false);
+  const [organizing, setOrganizing] = useState(false);
+  const [organized, setOrganized] = useState<number | null>(null);
   const [processed, setProcessed] = useState(0);
   const [totals, setTotals] = useState<Totals>({ created: 0, updated: 0, failed: [] });
   const progress = useMemo(
@@ -45,37 +89,43 @@ export function KnowledgeImportClient() {
     const nextTotals: Totals = { created: 0, updated: 0, failed: [] };
 
     try {
-      for (let offset = 0; offset < files.length; offset += BATCH_SIZE) {
-        const batch = files.slice(offset, offset + BATCH_SIZE);
-        const payloadFiles = await Promise.all(
-          batch.map(async (file) => {
-            const content = await file.text();
-            return {
-              name: file.name,
-              relativePath: file.webkitRelativePath || file.name,
-              content,
-              sha256: await sha256(content),
-              category: inferCategory(file),
-              sensitivity: inferSensitivity(collection, file),
-            };
-          }),
-        );
-
-        const response = await fetch("/api/kb/import", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ collection, files: payloadFiles }),
-        });
-        const body = (await response.json()) as Partial<Totals> & { error?: string };
-        if (!response.ok && response.status !== 207) {
-          throw new Error(body.error || `Import failed with HTTP ${response.status}.`);
+      let offset = 0;
+      while (offset < files.length) {
+        const payloadFiles: PreparedFile[] = [];
+        let batchBytes = 0;
+        while (offset < files.length && payloadFiles.length < BATCH_SIZE) {
+          const file = files[offset];
+          const rawContent = await file.text();
+          const content = rawContent.length > 0
+            ? rawContent
+            : "<!-- EMPTY_SOURCE_FILE -->\nThis source file was empty at intake and is retained as a review placeholder.";
+          const contentBytes = new TextEncoder().encode(content).byteLength;
+          if (contentBytes > 2_000_000) {
+            nextTotals.failed.push({ name: relativePath(file), error: "File exceeds the 2 MB safety limit." });
+            offset += 1;
+            setProcessed(offset);
+            continue;
+          }
+          if (payloadFiles.length > 0 && batchBytes + contentBytes > MAX_BATCH_BYTES) break;
+          payloadFiles.push({
+            name: file.name,
+            relativePath: relativePath(file),
+            content,
+            sha256: await sha256(rawContent),
+            category: inferCategory(file),
+            sensitivity: inferSensitivity(collection, file),
+          });
+          batchBytes += contentBytes;
+          offset += 1;
         }
 
-        nextTotals.created += body.created ?? 0;
-        nextTotals.updated += body.updated ?? 0;
-        nextTotals.failed.push(...(body.failed ?? []));
-        setProcessed(Math.min(offset + batch.length, files.length));
+        if (payloadFiles.length > 0) {
+          const result = await postBatch(collection, payloadFiles);
+          nextTotals.created += result.created;
+          nextTotals.updated += result.updated;
+          nextTotals.failed.push(...result.failed);
+        }
+        setProcessed(offset);
         setTotals({ ...nextTotals, failed: [...nextTotals.failed] });
       }
     } catch (error) {
@@ -89,6 +139,25 @@ export function KnowledgeImportClient() {
     }
   }
 
+
+  async function organizeExistingDrafts() {
+    if (organizing || running) return;
+    setOrganizing(true);
+    setOrganized(null);
+    let total = 0;
+    try {
+      while (true) {
+        const response = await fetch("/api/kb/organize", { method: "POST", credentials: "same-origin" });
+        const body = (await response.json()) as { organized?: number; remaining?: number; error?: string };
+        if (!response.ok) throw new Error(body.error || "Organization failed.");
+        total += body.organized ?? 0;
+        setOrganized(total);
+        if ((body.remaining ?? 0) === 0 || (body.organized ?? 0) === 0) break;
+      }
+    } finally {
+      setOrganizing(false);
+    }
+  }
   return (
     <div className="space-y-6">
       <div className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
@@ -106,20 +175,34 @@ export function KnowledgeImportClient() {
           </select>
         </label>
 
-        <label className="mt-5 block text-sm font-medium">
-          Markdown files
-          <input
-            type="file"
-            accept=".md,text/markdown,text/plain"
-            multiple
-            disabled={running}
-            onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
-            className="mt-2 block w-full rounded-md border border-zinc-300 px-3 py-2 dark:border-zinc-700"
-          />
-        </label>
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          <label className="block text-sm font-medium">
+            Add Markdown files
+            <input
+              type="file"
+              accept=".md,text/markdown,text/plain"
+              multiple
+              disabled={running}
+              onChange={(event) => setFiles((current) => mergeFiles(current, Array.from(event.target.files ?? [])))}
+              className="mt-2 block w-full rounded-md border border-zinc-300 px-3 py-2 dark:border-zinc-700"
+            />
+          </label>
+          <label className="block text-sm font-medium">
+            Add complete folder
+            <input
+              type="file"
+              accept=".md,text/markdown,text/plain"
+              multiple
+              {...folderInputProps}
+              disabled={running}
+              onChange={(event) => setFiles((current) => mergeFiles(current, Array.from(event.target.files ?? [])))}
+              className="mt-2 block w-full rounded-md border border-zinc-300 px-3 py-2 dark:border-zinc-700"
+            />
+          </label>
+        </div>
 
         <p className="mt-3 text-sm text-zinc-500">
-          Selected: {files.length} files. Every import is saved as DRAFT. Existing files with the same content hash are updated.
+          Selected: {files.length} Markdown files. Folder names become categories. Re-importing the same source path updates its existing draft instead of creating a duplicate.
         </p>
 
         {collection === "RESTRICTED_OPERATIONS" && (
@@ -128,16 +211,39 @@ export function KnowledgeImportClient() {
           </p>
         )}
 
-        <button
-          type="button"
-          onClick={startImport}
-          disabled={files.length === 0 || running}
-          className="mt-5 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900"
-        >
-          {running ? "Importing..." : "Import selected files"}
-        </button>
+        <div className="mt-5 flex gap-3">
+          <button
+            type="button"
+            onClick={startImport}
+            disabled={files.length === 0 || running}
+            className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900"
+          >
+            {running ? "Importing..." : "Import selected sources"}
+          </button>
+          <button
+            type="button"
+            onClick={organizeExistingDrafts}
+            disabled={running || organizing}
+            className="rounded-md border border-zinc-300 px-4 py-2 text-sm disabled:opacity-50 dark:border-zinc-700"
+          >
+            {organizing ? "Organizing..." : "Organize existing drafts"}
+          </button>
+          <button
+            type="button"
+            onClick={() => { setFiles([]); setProcessed(0); setTotals({ created: 0, updated: 0, failed: [] }); }}
+            disabled={running || files.length === 0}
+            className="rounded-md border border-zinc-300 px-4 py-2 text-sm disabled:opacity-50 dark:border-zinc-700"
+          >
+            Clear selection
+          </button>
+        </div>
       </div>
 
+      {organized !== null && !organizing && (
+        <p className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+          Organized {organized} imported drafts into filterable categories.
+        </p>
+      )}
       {(running || processed > 0 || totals.failed.length > 0) && (
         <div className="rounded-lg border border-zinc-200 p-5 dark:border-zinc-800">
           <div className="flex justify-between text-sm">
@@ -148,8 +254,13 @@ export function KnowledgeImportClient() {
             <div className="h-full bg-emerald-600 transition-all" style={{ width: `${progress}%` }} />
           </div>
           <p className="mt-3 text-sm">
-            Created: {totals.created} · Updated: {totals.updated} · Failed: {totals.failed.length}
+            Created: {totals.created} / Updated: {totals.updated} / Failed: {totals.failed.length}
           </p>
+          {processed === files.length && !running && totals.failed.length === 0 && (
+            <p className="mt-3 rounded-md bg-emerald-50 p-3 text-sm text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+              Import completed successfully. All sources are saved as reviewable drafts.
+            </p>
+          )}
           {totals.failed.length > 0 && (
             <ul className="mt-3 max-h-48 overflow-auto text-sm text-red-700 dark:text-red-300">
               {totals.failed.map((failure, index) => (

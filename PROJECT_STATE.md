@@ -104,3 +104,5 @@ health gates are active and verified.
 - Operational configuration sources are visibly prefixed `[RESTRICTED]`, marked high sensitivity, and are not published or indexed.
 - The knowledge-base list is paginated at 50 records per page; production UI verification shows 1,314 drafts across 27 pages.
 - The one-time machine import credential and access path were removed after intake; routine imports require a same-origin ADMIN session.
+- Permanent ADMIN ingestion workflow accepts individual Markdown files or complete folders, automatically creates filterable categories, batches by count and payload size, retries transient failures, retains empty files as review placeholders, and updates existing sources by stable collection/path identity without duplicates.
+- Existing imported drafts can be organized into database-backed categories from the ADMIN import page; no command-line or temporary machine credential is required.
