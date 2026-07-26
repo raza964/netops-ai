@@ -35,19 +35,30 @@ export default async function KnowledgeBasePage({
   ]);
 
   const canCreate = user.role === "ADMIN" || user.role === "ENGINEER";
+  const canImport = user.role === "ADMIN";
 
   return (
     <div>
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">Knowledge Base</h1>
-        {canCreate && (
-          <Link
-            href="/kb/new"
-            className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white dark:bg-zinc-50 dark:text-zinc-900"
-          >
-            New Article
-          </Link>
-        )}
+        <div className="flex gap-2">
+          {canImport && (
+            <Link
+              href="/kb/import"
+              className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium dark:border-zinc-700"
+            >
+              Import Sources
+            </Link>
+          )}
+          {canCreate && (
+            <Link
+              href="/kb/new"
+              className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white dark:bg-zinc-50 dark:text-zinc-900"
+            >
+              New Article
+            </Link>
+          )}
+        </div>
       </div>
 
       <form method="get" className="mt-6 flex flex-wrap gap-3 text-sm">
