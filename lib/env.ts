@@ -1,4 +1,4 @@
-﻿import { z } from "zod";
+import { z } from "zod";
 
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1, { error: "DATABASE_URL is required." }),
@@ -11,7 +11,6 @@ const envSchema = z.object({
   // (see lib/embeddings/provider.ts), not at startup.
   VOYAGE_API_KEY: z.string().min(1).optional(),
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
-  KB_IMPORT_TOKEN: z.string().min(32).optional(),
   ANTHROPIC_MODEL: z.string().min(1).default("claude-sonnet-4-20250514"),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
 });
@@ -21,7 +20,6 @@ export const env = envSchema.parse({
   AUTH_SECRET: process.env.AUTH_SECRET,
   VOYAGE_API_KEY: process.env.VOYAGE_API_KEY,
   ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
-  KB_IMPORT_TOKEN: process.env.KB_IMPORT_TOKEN,
   ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL,
   NODE_ENV: process.env.NODE_ENV,
 });
