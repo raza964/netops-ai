@@ -1,4 +1,4 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import { getCurrentUser } from "@/lib/dal";
 import { listArticles } from "@/lib/data/kb";
 import { getVendorsWithDeviceTypes, getTechnologies } from "@/lib/data/reference";
@@ -146,7 +146,7 @@ export default async function KnowledgeBasePage({
             </div>
             <p className="mt-1 line-clamp-2 text-sm text-zinc-600 dark:text-zinc-400">{article.summary}</p>
             <p className="mt-2 text-xs text-zinc-400">
-              {[article.vendor?.name, article.technology?.name].filter(Boolean).join(" Â· ") || "General"} Â·{" "}
+              {[article.vendor?.name, article.technology?.name].filter(Boolean).join(" / ") || "General"}{" / "}
               {article.createdBy.name}
             </p>
           </Link>
