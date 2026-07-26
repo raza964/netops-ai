@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
 import { createArticleAction } from "@/app/(dashboard)/kb/actions";
 import {
@@ -241,7 +241,7 @@ describe("listArticles search and filtering", () => {
 
     const results = await listArticles({ statuses: ["PUBLISHED"], query: "ospf adjacency" });
 
-    expect(results).toHaveLength(1);
+    expect(results.items).toHaveLength(1);
     expect(results.items[0]?.id).toBe(match.id);
   });
 
