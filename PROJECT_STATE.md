@@ -96,3 +96,11 @@ health gates are active and verified.
 - Do not re-audit completed phases unless affected files change.
 - AI output is advisory and must never execute commands or bypass configuration-change approval.
 - Production releases require green CI and the checklist in `DEPLOYMENT.md`.
+## Production knowledge intake
+
+- Production import completed on 2026-07-26: 1,314 of 1,314 audited Markdown sources, zero failures.
+- Imported collection counts: 555 lecture sources, 732 curated chat-knowledge sources, and 27 restricted operational sources.
+- Every imported record is `DRAFT` and requires editorial/technical review before publication.
+- Operational configuration sources are visibly prefixed `[RESTRICTED]`, marked high sensitivity, and are not published or indexed.
+- The knowledge-base list is paginated at 50 records per page; production UI verification shows 1,314 drafts across 27 pages.
+- The one-time machine import credential and access path were removed after intake; routine imports require a same-origin ADMIN session.
