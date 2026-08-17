@@ -1,7 +1,10 @@
 -- KB Source Path Evidence Profile — Read-Only Production Analysis
 -- Each query is fully self-contained with its own CTEs (PostgreSQL statement-scoped).
 -- Validated for PostgreSQL syntax. No writes, no classification, no article bodies.
--- Run in Neon SQL Editor: BEGIN TRANSACTION READ ONLY; [paste this] COMMIT;
+-- PRODUCTION EXECUTION: Wrap entire file in:
+--   BEGIN TRANSACTION READ ONLY;
+--   [paste this file]
+--   COMMIT;
 
 -- =====================================================================
 -- 1. Path depth distribution
@@ -112,17 +115,17 @@ SELECT 'extension' AS metric, extension, count(*) AS cnt
 FROM path_parts GROUP BY extension ORDER BY cnt DESC;
 
 -- =====================================================================
--- 7. Normalized tokens with counts
+-- 7. Normalized tokens with counts (source_path + filename + title)
 -- =====================================================================
 WITH meta AS (
-  SELECT id,
+  SELECT id, title,
     (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
   FROM "KnowledgeBaseArticle"
   WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
 ),
 path_parts AS (
   SELECT
-    id,
+    id, title,
     split_part(source_path, '/', 1) AS lvl1,
     split_part(source_path, '/', 2) AS lvl2,
     split_part(source_path, '/', 3) AS lvl3,
@@ -130,17 +133,11 @@ path_parts AS (
   FROM meta
 ),
 norm_tokens AS (
-  SELECT id,
-    regexp_split_to_table(lower(lvl1), '[_\-]+') AS token FROM path_parts WHERE lvl1 IS NOT NULL
-  UNION ALL
-  SELECT id,
-    regexp_split_to_table(lower(lvl2), '[_\-]+') AS token FROM path_parts WHERE lvl2 IS NOT NULL
-  UNION ALL
-  SELECT id,
-    regexp_split_to_table(lower(lvl3), '[_\-]+') AS token FROM path_parts WHERE lvl3 IS NOT NULL
-  UNION ALL
-  SELECT id,
-    regexp_split_to_table(lower(filename), '[_\-\.]+') AS token FROM path_parts
+  SELECT id, regexp_split_to_table(lower(lvl1), '[_\-]+') AS token FROM path_parts WHERE lvl1 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(lvl2), '[_\-]+') FROM path_parts WHERE lvl2 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(lvl3), '[_\-]+') FROM path_parts WHERE lvl3 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(filename), '[_\-\.]+') FROM path_parts
+  UNION ALL SELECT id, regexp_split_to_table(lower(title), '[_\-\. ]+') FROM path_parts
 )
 SELECT 'normalized_token' AS metric,
        token,
@@ -185,7 +182,12 @@ SELECT 'title_sample' AS metric, category, title
 FROM ranked WHERE rn <= 3 ORDER BY category, rn;
 
 -- =====================================================================
--- 10. Vendor tokens (boundary-aware, exact normalized token match)
+-- Canonical token aliases (hyphen/variant normalization)
+-- =====================================================================
+-- Each query below uses its own canonical_tokens CTE with aliases
+
+-- =====================================================================
+-- 10. Vendor tokens (boundary-aware, exact normalized token match + aliases)
 -- =====================================================================
 WITH meta AS (
   SELECT id, title,
@@ -202,10 +204,24 @@ path_parts AS (
   FROM meta
 ),
 norm_tokens AS (
-  SELECT id, title, regexp_split_to_table(lower(lvl1), '[_\-]+') AS token FROM path_parts WHERE lvl1 IS NOT NULL
-  UNION ALL SELECT id, title, regexp_split_to_table(lower(lvl2), '[_\-]+') FROM path_parts WHERE lvl2 IS NOT NULL
-  UNION ALL SELECT id, title, regexp_split_to_table(lower(lvl3), '[_\-]+') FROM path_parts WHERE lvl3 IS NOT NULL
-  UNION ALL SELECT id, title, regexp_split_to_table(lower(filename), '[_\-\.]+') FROM path_parts
+  SELECT id, regexp_split_to_table(lower(lvl1), '[_\-]+') AS token FROM path_parts WHERE lvl1 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(lvl2), '[_\-]+') FROM path_parts WHERE lvl2 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(lvl3), '[_\-]+') FROM path_parts WHERE lvl3 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(filename), '[_\-\.]+') FROM path_parts
+  UNION ALL SELECT id, regexp_split_to_table(lower(title), '[_\-\. ]+') FROM path_parts
+),
+canonical_tokens AS (
+  SELECT id,
+    CASE
+      WHEN token IN ('ios', 'iosxe', 'iosxr') THEN 'ios'
+      WHEN token IN ('iosxe', 'ios-xe') THEN 'ios-xe'
+      WHEN token IN ('iosxr', 'ios-xr') THEN 'ios-xr'
+      WHEN token IN ('sdwan', 'sd-wan') THEN 'sdwan'
+      WHEN token IN ('mikrotik', 'routeros') THEN 'mikrotik'
+      ELSE token
+    END AS canonical_token
+  FROM norm_tokens
+  WHERE token ~ '^[a-z0-9]+$' AND length(token) > 1
 ),
 dict AS (
   SELECT v AS token FROM unnest(ARRAY[
@@ -216,13 +232,15 @@ dict AS (
     'checkpoint', 'f5', 'a10', 'infoblox'
   ]) AS v
 )
-SELECT 'vendor_token' AS metric, n.token, count(*) AS cnt
-FROM norm_tokens n
-JOIN dict d ON n.token = d.token
-GROUP BY n.token ORDER BY cnt DESC;
+SELECT 'vendor_token' AS metric,
+       c.canonical_token AS token,
+       count(DISTINCT c.id) AS article_cnt
+FROM canonical_tokens c
+JOIN dict d ON c.canonical_token = d.token
+GROUP BY c.canonical_token ORDER BY article_cnt DESC;
 
 -- =====================================================================
--- 11. Platform tokens (boundary-aware, exact normalized token match)
+-- 11. Platform tokens (high-specificity only, with canonical aliases)
 -- =====================================================================
 WITH meta AS (
   SELECT id, title,
@@ -239,14 +257,27 @@ path_parts AS (
   FROM meta
 ),
 norm_tokens AS (
-  SELECT id, title, regexp_split_to_table(lower(lvl1), '[_\-]+') AS token FROM path_parts WHERE lvl1 IS NOT NULL
-  UNION ALL SELECT id, title, regexp_split_to_table(lower(lvl2), '[_\-]+') FROM path_parts WHERE lvl2 IS NOT NULL
-  UNION ALL SELECT id, title, regexp_split_to_table(lower(lvl3), '[_\-]+') FROM path_parts WHERE lvl3 IS NOT NULL
-  UNION ALL SELECT id, title, regexp_split_to_table(lower(filename), '[_\-\.]+') FROM path_parts
+  SELECT id, regexp_split_to_table(lower(lvl1), '[_\-]+') AS token FROM path_parts WHERE lvl1 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(lvl2), '[_\-]+') FROM path_parts WHERE lvl2 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(lvl3), '[_\-]+') FROM path_parts WHERE lvl3 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(filename), '[_\-\.]+') FROM path_parts
+  UNION ALL SELECT id, regexp_split_to_table(lower(title), '[_\-\. ]+') FROM path_parts
+),
+canonical_tokens AS (
+  SELECT id,
+    CASE
+      WHEN token IN ('ios', 'iosxe', 'ios-xe') THEN 'ios-xe'
+      WHEN token IN ('iosxr', 'ios-xr') THEN 'ios-xr'
+      WHEN token IN ('sdwan', 'sd-wan') THEN 'sdwan'
+      WHEN token IN ('mikrotik', 'routeros') THEN 'routeros'
+      ELSE token
+    END AS canonical_token
+  FROM norm_tokens
+  WHERE token ~ '^[a-z0-9]+$' AND length(token) > 1
 ),
 dict AS (
   SELECT p AS token FROM unnest(ARRAY[
-    'ios', 'ios-xe', 'ios-xr', 'nxos',
+    'ios-xe', 'ios-xr', 'nxos',
     'junos', 'routeros', 'vrp', 'eos',
     'linux', 'windows', 'fortios', 'panos',
     'aos', 'gaia', 'tmos', 'acos',
@@ -259,13 +290,15 @@ dict AS (
     'pa', 'vm', 'cn'
   ]) AS p
 )
-SELECT 'platform_token' AS metric, n.token, count(*) AS cnt
-FROM norm_tokens n
-JOIN dict d ON n.token = d.token
-GROUP BY n.token ORDER BY cnt DESC;
+SELECT 'platform_token' AS metric,
+       c.canonical_token AS token,
+       count(DISTINCT c.id) AS article_cnt
+FROM canonical_tokens c
+JOIN dict d ON c.canonical_token = d.token
+GROUP BY c.canonical_token ORDER BY article_cnt DESC;
 
 -- =====================================================================
--- 12. Protocol/topic tokens (boundary-aware, exact normalized token match)
+-- 12. Protocol/topic tokens (boundary-aware, exact normalized token match + aliases)
 -- =====================================================================
 WITH meta AS (
   SELECT id, title,
@@ -282,10 +315,21 @@ path_parts AS (
   FROM meta
 ),
 norm_tokens AS (
-  SELECT id, title, regexp_split_to_table(lower(lvl1), '[_\-]+') AS token FROM path_parts WHERE lvl1 IS NOT NULL
-  UNION ALL SELECT id, title, regexp_split_to_table(lower(lvl2), '[_\-]+') FROM path_parts WHERE lvl2 IS NOT NULL
-  UNION ALL SELECT id, title, regexp_split_to_table(lower(lvl3), '[_\-]+') FROM path_parts WHERE lvl3 IS NOT NULL
-  UNION ALL SELECT id, title, regexp_split_to_table(lower(filename), '[_\-\.]+') FROM path_parts
+  SELECT id, regexp_split_to_table(lower(lvl1), '[_\-]+') AS token FROM path_parts WHERE lvl1 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(lvl2), '[_\-]+') FROM path_parts WHERE lvl2 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(lvl3), '[_\-]+') FROM path_parts WHERE lvl3 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(filename), '[_\-\.]+') FROM path_parts
+  UNION ALL SELECT id, regexp_split_to_table(lower(title), '[_\-\. ]+') FROM path_parts
+),
+canonical_tokens AS (
+  SELECT id,
+    CASE
+      WHEN token IN ('sdwan', 'sd-wan') THEN 'sdwan'
+      WHEN token IN ('ci-cd', 'cicd') THEN 'ci-cd'
+      ELSE token
+    END AS canonical_token
+  FROM norm_tokens
+  WHERE token ~ '^[a-z0-9]+$' AND length(token) > 1
 ),
 dict AS (
   SELECT pt AS token FROM unnest(ARRAY[
@@ -304,13 +348,15 @@ dict AS (
     'nat', 'firewall', 'acl', 'zone', 'policy'
   ]) AS pt
 )
-SELECT 'protocol_token' AS metric, n.token, count(*) AS cnt
-FROM norm_tokens n
-JOIN dict d ON n.token = d.token
-GROUP BY n.token ORDER BY cnt DESC;
+SELECT 'protocol_token' AS metric,
+       c.canonical_token AS token,
+       count(DISTINCT c.id) AS article_cnt
+FROM canonical_tokens c
+JOIN dict d ON c.canonical_token = d.token
+GROUP BY c.canonical_token ORDER BY article_cnt DESC;
 
 -- =====================================================================
--- 13. Records with NO vendor token (same boundary rules)
+-- 13. Records with NO vendor token (identical evidence sources as positive)
 -- =====================================================================
 WITH meta AS (
   SELECT id,
@@ -331,6 +377,19 @@ norm_tokens AS (
   UNION ALL SELECT id, regexp_split_to_table(lower(lvl2), '[_\-]+') FROM path_parts WHERE lvl2 IS NOT NULL
   UNION ALL SELECT id, regexp_split_to_table(lower(lvl3), '[_\-]+') FROM path_parts WHERE lvl3 IS NOT NULL
   UNION ALL SELECT id, regexp_split_to_table(lower(filename), '[_\-\.]+') FROM path_parts
+),
+canonical_tokens AS (
+  SELECT id,
+    CASE
+      WHEN token IN ('ios', 'iosxe', 'iosxr') THEN 'ios'
+      WHEN token IN ('iosxe', 'ios-xe') THEN 'ios-xe'
+      WHEN token IN ('iosxr', 'ios-xr') THEN 'ios-xr'
+      WHEN token IN ('sdwan', 'sd-wan') THEN 'sdwan'
+      WHEN token IN ('mikrotik', 'routeros') THEN 'mikrotik'
+      ELSE token
+    END AS canonical_token
+  FROM norm_tokens
+  WHERE token ~ '^[a-z0-9]+$' AND length(token) > 1
 ),
 dict AS (
   SELECT v AS token FROM unnest(ARRAY[
@@ -344,13 +403,13 @@ dict AS (
 SELECT 'no_vendor_token' AS metric, count(*) AS cnt
 FROM path_parts p
 WHERE NOT EXISTS (
-  SELECT 1 FROM norm_tokens n
-  JOIN dict d ON n.token = d.token
-  WHERE n.id = p.id
+  SELECT 1 FROM canonical_tokens c
+  JOIN dict d ON c.canonical_token = d.token
+  WHERE c.id = p.id
 );
 
 -- =====================================================================
--- 14. Records with NO platform token (same boundary rules)
+-- 14. Records with NO platform token (identical evidence sources as positive)
 -- =====================================================================
 WITH meta AS (
   SELECT id,
@@ -372,9 +431,21 @@ norm_tokens AS (
   UNION ALL SELECT id, regexp_split_to_table(lower(lvl3), '[_\-]+') FROM path_parts WHERE lvl3 IS NOT NULL
   UNION ALL SELECT id, regexp_split_to_table(lower(filename), '[_\-\.]+') FROM path_parts
 ),
+canonical_tokens AS (
+  SELECT id,
+    CASE
+      WHEN token IN ('ios', 'iosxe', 'ios-xe') THEN 'ios-xe'
+      WHEN token IN ('iosxr', 'ios-xr') THEN 'ios-xr'
+      WHEN token IN ('sdwan', 'sd-wan') THEN 'sdwan'
+      WHEN token IN ('mikrotik', 'routeros') THEN 'routeros'
+      ELSE token
+    END AS canonical_token
+  FROM norm_tokens
+  WHERE token ~ '^[a-z0-9]+$' AND length(token) > 1
+),
 dict AS (
   SELECT p AS token FROM unnest(ARRAY[
-    'ios', 'ios-xe', 'ios-xr', 'nxos',
+    'ios-xe', 'ios-xr', 'nxos',
     'junos', 'routeros', 'vrp', 'eos',
     'linux', 'windows', 'fortios', 'panos',
     'aos', 'gaia', 'tmos', 'acos',
@@ -390,13 +461,13 @@ dict AS (
 SELECT 'no_platform_token' AS metric, count(*) AS cnt
 FROM path_parts p
 WHERE NOT EXISTS (
-  SELECT 1 FROM norm_tokens n
-  JOIN dict d ON n.token = d.token
-  WHERE n.id = p.id
+  SELECT 1 FROM canonical_tokens c
+  JOIN dict d ON c.canonical_token = d.token
+  WHERE c.id = p.id
 );
 
 -- =====================================================================
--- Validation: Total article count
+-- 15. Validation: Total article count
 -- =====================================================================
 WITH meta AS (
   SELECT count(*) AS total_articles
