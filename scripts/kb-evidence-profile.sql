@@ -19,7 +19,7 @@ WITH meta AS (
 ),
 path_parts AS (
   SELECT
-    id,
+    source_path,
     split_part(source_path, '/', 1) AS lvl1,
     split_part(source_path, '/', 2) AS lvl2,
     split_part(source_path, '/', 3) AS lvl3
@@ -48,7 +48,7 @@ SELECT 'lvl1_segment' AS metric, lvl1 AS segment, count(*) AS cnt
 FROM path_parts GROUP BY lvl1 ORDER BY cnt DESC;
 
 -- =====================================================================
--- 2. Second-level segments (lvl2)
+-- 3. Second-level segments (lvl2)
 -- =====================================================================
 WITH meta AS (
   SELECT (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
@@ -64,7 +64,7 @@ WHERE lvl2 IS NOT NULL AND lvl2 <> ''
 GROUP BY lvl2 ORDER BY cnt DESC;
 
 -- =====================================================================
--- 3. Third-level segments (lvl3)
+-- 4. Third-level segments (lvl3)
 -- =====================================================================
 WITH meta AS (
   SELECT (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
@@ -80,18 +80,52 @@ WHERE lvl3 IS NOT NULL AND lvl3 <> ''
 GROUP BY lvl3 ORDER BY cnt DESC LIMIT 50;
 
 -- =====================================================================
--- 3. Normalized tokens with counts (source_path + filename + title)
+-- 5. Filenames (derived from source_path)
 -- =====================================================================
 WITH meta AS (
-  SELECT id,
-    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path,
-    title
+  SELECT (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
+  FROM "KnowledgeBaseArticle"
+  WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
+),
+path_parts AS (
+  SELECT split_part(source_path, '/', -1) AS filename FROM meta
+)
+SELECT 'filename' AS metric, filename, count(*) AS cnt
+FROM path_parts GROUP BY filename ORDER BY cnt DESC LIMIT 100;
+
+-- =====================================================================
+-- 6. File extensions
+-- =====================================================================
+WITH meta AS (
+  SELECT (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
   FROM "KnowledgeBaseArticle"
   WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
 ),
 path_parts AS (
   SELECT
-    id,
+    split_part(source_path, '/', -1) AS filename,
+    CASE
+      WHEN split_part(source_path, '/', -1) ~ '\.([a-zA-Z0-9]+)$'
+      THEN (regexp_match(split_part(source_path, '/', -1), '\.([a-zA-Z0-9]+)$'))[1]
+      ELSE 'no_extension'
+    END AS extension
+  FROM meta
+)
+SELECT 'extension' AS metric, extension, count(*) AS cnt
+FROM path_parts GROUP BY extension ORDER BY cnt DESC;
+
+-- =====================================================================
+-- 7. Normalized tokens with counts (source_path + filename + title)
+-- =====================================================================
+WITH meta AS (
+  SELECT id, title,
+    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
+  FROM "KnowledgeBaseArticle"
+  WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
+),
+path_parts AS (
+  SELECT
+    id, title,
     split_part(source_path, '/', 1) AS lvl1,
     split_part(source_path, '/', 2) AS lvl2,
     split_part(source_path, '/', 3) AS lvl3,
@@ -104,84 +138,51 @@ norm_tokens AS (
   UNION ALL SELECT id, regexp_split_to_table(lower(lvl3), '[_\-]+') FROM path_parts WHERE lvl3 IS NOT NULL
   UNION ALL SELECT id, regexp_split_to_table(lower(filename), '[_\-\.]+') FROM path_parts
   UNION ALL SELECT id, regexp_split_to_table(lower(title), '[_\-\. ]+') FROM path_parts
-),
--- Aggregate tokens per article ID to get the full token sequence
-per_id_tokens AS (
-  SELECT id,
-    array_agg(token ORDER BY array_position ARRAY['lvl1','lvl2','lvl3','filename','title']) AS tokens,
-    array_length(array_agg(token ORDER BY array_position ARRAY['lvl1','lvl2','lvl3','filename','title']), 1) AS n_tokens
-  FROM (
-    SELECT id, token,
-      array_position ARRAY['lvl1','lvl2','lvl3','filename','title'] AS position
-    FROM norm_tokens
-  ) t
-  GROUP BY id
-),
--- Generate bigrams from the token sequence
-bigrams AS (
-  SELECT id,
-    tokens[1] AS unigram,
-    CASE WHEN n_tokens > 1 THEN tokens[1] || ' ' || tokens[2] END AS bigram
-  FROM per_id_tokens
-),
--- Dictionary with unigram and bigram aliases
--- Unigram aliases: iosxe→ios-xe, iosxr→ios-xr, sdwan→sdwan
--- Bigram aliases: iosxe→ios-xe (via bigram ios xe), iosxr→ios-xr (via bigram ios xr), sdwan→sdwan (via bigram sd wan)
-dict AS (
-  SELECT 'ios-xe' AS alias, unnest(ARRAY['iosxe', 'ios xe']) AS token UNION ALL
-  SELECT 'ios-xr', unnest(ARRAY['iosxr', 'ios xr']) UNION ALL
-  SELECT 'sdwan', unnest(ARRAY['sdwan', 'sd wan']) UNION ALL
-  -- Identity mappings
-  SELECT 'ios', unnest(ARRAY['ios']) UNION ALL
-  SELECT 'junos', unnest(ARRAY['junos']) UNION ALL
-  SELECT 'nxos', unnest(ARRAY['nxos']) UNION ALL
-  SELECT 'fortios', unnest(ARRAY['fortios']) UNION ALL
-  SELECT 'panos', unnest(ARRAY['panos']) UNION ALL
-  SELECT 'vmanage', unnest(ARRAY['vmanage']) UNION ALL
-  SELECT 'vsmart', unnest(ARRAY['vsmart']) UNION ALL
-  SELECT 'vbond', unnest(ARRAY['vbond']) UNION ALL
-  SELECT 'catalyst', unnest(ARRAY['catalyst']) UNION ALL
-  SELECT 'nexus', unnest(ARRAY['nexus']) UNION ALL
-  SELECT 'asr', unnest(ARRAY['asr']) UNION ALL
-  SELECT 'isr', unnest(ARRAY['isr']) UNION ALL
-  SELECT 'csr', unnest(ARRAY['csr']) UNION ALL
-  SELECT 'qfx', unnest(ARRAY['qfx']) UNION ALL
-  SELECT 'ptx', unnest(ARRAY['ptx']) UNION ALL
-  SELECT 'ccr', unnest(ARRAY['ccr']) UNION ALL
-  SELECT 'crs', unnest(ARRAY['crs']) UNION ALL
-  SELECT 'fortigate', unnest(ARRAY['fortigate']) UNION ALL
-  SELECT 'fortiswitch', unnest(ARRAY['fortiswitch']) UNION ALL
-  SELECT 'fortiap', unnest(ARRAY['fortiap'])
-),
--- Match each article's token sequence against the dictionary
-matched AS (
-  SELECT id,
-    CASE
-      -- Unigram matches for single-token articles
-      WHEN n_tokens = 1 AND tokens[1] IN (SELECT alias FROM dict WHERE alias IN ('iosxe', 'iosxr', 'sdwan')) THEN
-        (SELECT alias FROM dict WHERE token = tokens[1] AND alias IS NOT NULL LIMIT 1)
-      -- Two-token sequences with bigram matching
-      WHEN n_tokens = 2 THEN
-        CASE
-          WHEN tokens[1] = 'ios' AND tokens[2] = 'xe' THEN 'ios-xe'
-          WHEN tokens[1] = 'ios' AND tokens[2] = 'xr' THEN 'ios-xr'
-          WHEN tokens[1] = 'sd' AND tokens[2] = 'wan' THEN 'sdwan'
-          WHEN tokens[1] || ' ' || tokens[2] IN (SELECT alias FROM dict) THEN (SELECT alias FROM dict WHERE token = tokens[1] || ' ' || tokens[2] LIMIT 1)
-          ELSE tokens[1]  -- fallback to first token
-        END
-      -- Single token: keep as-is (ios stays ios, junos stays junos)
-      WHEN n_tokens = 1 THEN tokens[1]
-      ELSE tokens[1]
-    END AS canonical_token
-  FROM per_id_tokens
 )
-SELECT 'platform_token' AS metric, canonical_token AS token, count(DISTINCT id) AS article_cnt
-FROM matched
-WHERE canonical_token IS NOT NULL
-GROUP BY canonical_token ORDER BY article_cnt DESC;
+SELECT 'normalized_token' AS metric,
+       token,
+       count(DISTINCT id) AS article_cnt,
+       count(*) AS total_occurrences
+FROM norm_tokens
+WHERE token ~ '^[a-z0-9]+$' AND length(token) > 1
+GROUP BY token ORDER BY article_cnt DESC LIMIT 150;
 
 -- =====================================================================
--- 12. Explicit platform tokens (negative evidence - identical CTE chain)
+-- 8. Category × first-level path segment
+-- =====================================================================
+WITH meta AS (
+  SELECT
+    (regexp_match(content, 'category: ([^\r\n]+)'))[1] AS category,
+    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
+  FROM "KnowledgeBaseArticle"
+  WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
+),
+path_parts AS (
+  SELECT category, split_part(source_path, '/', 1) AS lvl1 FROM meta
+)
+SELECT 'category_lvl1' AS metric, category, lvl1, count(*) AS cnt
+FROM path_parts GROUP BY category, lvl1 ORDER BY category, cnt DESC;
+
+-- =====================================================================
+-- 9. Capped title samples per category (max 3)
+-- =====================================================================
+WITH meta AS (
+  SELECT
+    id,
+    (regexp_match(content, 'category: ([^\r\n]+)'))[1] AS category,
+    title
+  FROM "KnowledgeBaseArticle"
+  WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
+),
+ranked AS (
+  SELECT category, title, row_number() OVER (PARTITION BY category ORDER BY id) AS rn
+  FROM meta
+)
+SELECT 'title_sample' AS metric, category, title
+FROM ranked WHERE rn <= 3 ORDER BY category, rn;
+
+-- =====================================================================
+-- 10. Vendor tokens (boundary-aware, exact normalized token match + aliases)
 -- =====================================================================
 WITH meta AS (
   SELECT id, title,
@@ -204,74 +205,255 @@ norm_tokens AS (
   UNION ALL SELECT id, regexp_split_to_table(lower(filename), '[_\-\.]+') FROM path_parts
   UNION ALL SELECT id, regexp_split_to_table(lower(title), '[_\-\. ]+') FROM path_parts
 ),
-per_id_tokens AS (
-  SELECT id,
-    array_agg(token ORDER BY array_position ARRAY['lvl1','lvl2','lvl3','filename','title']) AS tokens,
-    array_length(array_agg(token ORDER BY array_position ARRAY['lvl1','lvl2','lvl3','filename','title']), 1) AS n_tokens
-  FROM (
-    SELECT id, regexp_split_to_table(lower(lvl1), '[_\-]+') AS token FROM path_parts WHERE lvl1 IS NOT NULL
-    UNION ALL SELECT id, regexp_split_to_table(lower(lvl2), '[_\-]+') FROM path_parts WHERE lvl2 IS NOT NULL
-    UNION ALL SELECT id, regexp_split_to_table(lower(lvl3), '[_\-]+') FROM path_parts WHERE lvl3 IS NOT NULL
-    UNION ALL SELECT id, regexp_split_to_table(lower(filename), '[_\-\.]+') FROM path_parts
-    UNION ALL SELECT id, regexp_split_to_table(lower(title), '[_\-\. ]+') FROM path_parts
-  ) t
-  GROUP BY id
-),
-bigrams AS (
-  SELECT id,
-    tokens[1] AS unigram,
-    CASE WHEN n_tokens > 1 THEN tokens[1] || ' ' || tokens[2] END AS bigram
-  FROM per_id_tokens
-),
-dict AS (
-  SELECT 'ios-xe' AS alias, unnest(ARRAY['iosxe', 'ios xe']) AS token UNION ALL
-  SELECT 'ios-xr', unnest(ARRAY['iosxr', 'ios xr']) UNION ALL
-  SELECT 'sdwan', unnest(ARRAY['sdwan', 'sd wan']) UNION ALL
-  SELECT 'ios', unnest(ARRAY['ios']) UNION ALL
-  SELECT 'junos', unnest(ARRAY['junos']) UNION ALL
-  SELECT 'nxos', unnest(ARRAY['nxos']) UNION ALL
-  SELECT 'fortios', unnest(ARRAY['fortios']) UNION ALL
-  SELECT 'panos', unnest(ARRAY['panos']) UNION ALL
-  SELECT 'vmanage', unnest(ARRAY['vmanage']) UNION ALL
-  SELECT 'vsmart', unnest(ARRAY['vsmart']) UNION ALL
-  SELECT 'vbond', unnest(ARRAY['vbond']) UNION ALL
-  SELECT 'catalyst', unnest(ARRAY['catalyst']) UNION ALL
-  SELECT 'nexus', unnest(ARRAY['nexus']) UNION ALL
-  SELECT 'asr', unnest(ARRAY['asr']) UNION ALL
-  SELECT 'isr', unnest(ARRAY['isr']) UNION ALL
-  SELECT 'csr', unnest(ARRAY['csr']) UNION ALL
-  SELECT 'qfx', unnest(ARRAY['qfx']) UNION ALL
-  SELECT 'ptx', unnest(ARRAY['ptx']) UNION ALL
-  SELECT 'ccr', unnest(ARRAY['ccr']) UNION ALL
-  SELECT 'crs', unnest(ARRAY['crs']) UNION ALL
-  SELECT 'fortigate', unnest(ARRAY['fortigate']) UNION ALL
-  SELECT 'fortiswitch', unnest(ARRAY['fortiswitch']) UNION ALL
-  SELECT 'fortiap', unnest(ARRAY['fortiap'])
-),
-matched AS (
+canonical_tokens AS (
   SELECT id,
     CASE
-      WHEN n_tokens = 1 AND tokens[1] IN (SELECT alias FROM dict WHERE alias IN ('iosxe', 'iosxr', 'sdwan')) THEN
-        (SELECT alias FROM dict WHERE token = tokens[1] AND alias IS NOT NULL LIMIT 1)
-      WHEN n_tokens = 2 THEN
-        CASE
-          WHEN tokens[1] = 'ios' AND tokens[2] = 'xe' THEN 'ios-xe'
-          WHEN tokens[1] = 'ios' AND tokens[2] = 'xr' THEN 'ios-xr'
-          WHEN tokens[1] = 'sd' AND tokens[2] = 'wan' THEN 'sdwan'
-          WHEN tokens[1] || ' ' || tokens[2] IN (SELECT alias FROM dict) THEN (SELECT alias FROM dict WHERE token = tokens[1] || ' ' || tokens[2] LIMIT 1)
-          ELSE tokens[1]
-        END
-      WHEN n_tokens = 1 THEN tokens[1]
-      ELSE tokens[1]
+      WHEN token IN ('iosxe', 'ios-xe') THEN 'ios-xe'
+      WHEN token IN ('iosxr', 'ios-xr') THEN 'ios-xr'
+      WHEN token IN ('sdwan', 'sd-wan') THEN 'sdwan'
+      -- NO routeros → mikrotik mapping here. routeros is platform-only.
+      ELSE token
     END AS canonical_token
-  FROM per_id_tokens
+  FROM norm_tokens
+  WHERE token ~ '^[a-z0-9]+$' AND length(token) > 1
+),
+dict AS (
+  SELECT v AS token FROM unnest(ARRAY[
+    'cisco', 'juniper', 'mikrotik',
+    'huawei', 'fortinet', 'arista', 'paloalto',
+    'aruba', 'ubiquiti', 'nokia', 'h3c',
+    'extreme', 'dell', 'avaya', 'alcatel',
+    'checkpoint', 'f5', 'a10', 'infoblox'
+  ]) AS v
 )
-SELECT 'no_platform_token' AS metric, count(*) AS cnt
-FROM matched
-WHERE canonical_token IS NULL;
+SELECT 'vendor_token' AS metric,
+       c.canonical_token AS token,
+       count(DISTINCT c.id) AS article_cnt
+FROM canonical_tokens c
+JOIN dict d ON c.canonical_token = d.token
+GROUP BY c.canonical_token ORDER BY article_cnt DESC;
 
 -- =====================================================================
--- 13. Validation: Total article count
+-- 11. Platform tokens (HIGH-SPECIFICITY ONLY, with canonical aliases)
+-- =====================================================================
+WITH meta AS (
+  SELECT id, title,
+    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
+  FROM "KnowledgeBaseArticle"
+  WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
+),
+path_parts AS (
+  SELECT id, title,
+    split_part(source_path, '/', 1) AS lvl1,
+    split_part(source_path, '/', 2) AS lvl2,
+    split_part(source_path, '/', 3) AS lvl3,
+    split_part(source_path, '/', -1) AS filename
+  FROM meta
+),
+norm_tokens AS (
+  SELECT id, regexp_split_to_table(lower(lvl1), '[_\-]+') AS token FROM path_parts WHERE lvl1 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(lvl2), '[_\-]+') FROM path_parts WHERE lvl2 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(lvl3), '[_\-]+') FROM path_parts WHERE lvl3 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(filename), '[_\-\.]+') FROM path_parts
+  UNION ALL SELECT id, regexp_split_to_table(lower(title), '[_\-\. ]+') FROM path_parts
+),
+canonical_tokens AS (
+  SELECT id,
+    CASE
+      WHEN token IN ('iosxe', 'ios-xe') THEN 'ios-xe'
+      WHEN token IN ('iosxr', 'ios-xr') THEN 'ios-xr'
+      WHEN token IN ('sdwan', 'sd-wan') THEN 'sdwan'
+      WHEN token IN ('mikrotik') THEN 'mikrotik'
+      ELSE token
+    END AS canonical_token
+  FROM norm_tokens
+  WHERE token ~ '^[a-z0-9]+$' AND length(token) > 1
+),
+dict AS (
+  SELECT p AS token FROM unnest(ARRAY[
+    'ios-xe', 'ios-xr', 'nxos',
+    'junos', 'routeros', 'fortios', 'panos',
+    'vmanage', 'vsmart', 'vbond',
+    'catalyst', 'nexus', 'asr', 'isr', 'csr',
+    'qfx', 'ptx', 'ccr', 'crs',
+    'fortigate', 'fortiswitch', 'fortiap'
+  ]) AS p
+)
+SELECT 'platform_token' AS metric,
+       c.canonical_token AS token,
+       count(DISTINCT c.id) AS article_cnt
+FROM canonical_tokens c
+JOIN dict d ON c.canonical_token = d.token
+GROUP BY c.canonical_token ORDER BY article_cnt DESC;
+
+-- =====================================================================
+-- 12. Protocol/topic tokens (boundary-aware, exact normalized token match + aliases)
+-- =====================================================================
+WITH meta AS (
+  SELECT id, title,
+    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
+  FROM "KnowledgeBaseArticle"
+  WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
+),
+path_parts AS (
+  SELECT id, title,
+    split_part(source_path, '/', 1) AS lvl1,
+    split_part(source_path, '/', 2) AS lvl2,
+    split_part(source_path, '/', 3) AS lvl3,
+    split_part(source_path, '/', -1) AS filename
+  FROM meta
+),
+norm_tokens AS (
+  SELECT id, regexp_split_to_table(lower(lvl1), '[_\-]+') AS token FROM path_parts WHERE lvl1 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(lvl2), '[_\-]+') FROM path_parts WHERE lvl2 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(lvl3), '[_\-]+') FROM path_parts WHERE lvl3 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(filename), '[_\-\.]+') FROM path_parts
+  UNION ALL SELECT id, regexp_split_to_table(lower(title), '[_\-\. ]+') FROM path_parts
+),
+canonical_tokens AS (
+  SELECT id,
+    CASE
+      WHEN token IN ('sdwan', 'sd-wan') THEN 'sdwan'
+      WHEN token IN ('ci-cd', 'cicd') THEN 'ci-cd'
+      ELSE token
+    END AS canonical_token
+  FROM norm_tokens
+  WHERE token ~ '^[a-z0-9]+$' AND length(token) > 1
+),
+dict AS (
+  SELECT pt AS token FROM unnest(ARRAY[
+    'bgp', 'ospf', 'isis', 'eigrp', 'rip', 'static',
+    'vlan', 'stp', 'mstp', 'lacp', 'vpc', 'mlag',
+    'vxlan', 'evpn', 'mpls', 'ldp', 'rsvp', 'te',
+    'atom', 'vpls', 'pseudowire',
+    'ipsec', 'ikev2', 'ssl', 'vpn', 'gre', 'dmvpn',
+    'pppoe', 'ppp', 'dhcp', 'dns', 'ipam',
+    'radius', 'tacacs', 'aaa', 'dot1x', 'mab',
+    'snmp', 'syslog', 'netflow', 'sflow', 'telemetry',
+    'netconf', 'restconf', 'yang', 'gnmi',
+    'ansible', 'terraform', 'python', 'gitops', 'ci-cd',
+    'sdwan', 'viptela', 'meraki',
+    'qos', 'multicast', 'pim', 'igmp', 'mld',
+    'nat', 'firewall', 'acl', 'zone', 'policy'
+  ]) AS pt
+)
+SELECT 'protocol_token' AS metric,
+       c.canonical_token AS token,
+       count(DISTINCT c.id) AS article_cnt
+FROM canonical_tokens c
+JOIN dict d ON c.canonical_token = d.token
+GROUP BY c.canonical_token ORDER BY article_cnt DESC;
+
+-- =====================================================================
+-- 13. Records with NO vendor token (IDENTICAL CTE chain as positive Vendor query)
+-- =====================================================================
+WITH meta AS (
+  SELECT id, title,
+    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
+  FROM "KnowledgeBaseArticle"
+  WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
+),
+path_parts AS (
+  SELECT id, title,
+    split_part(source_path, '/', 1) AS lvl1,
+    split_part(source_path, '/', 2) AS lvl2,
+    split_part(source_path, '/', 3) AS lvl3,
+    split_part(source_path, '/', -1) AS filename
+  FROM meta
+),
+norm_tokens AS (
+  SELECT id, regexp_split_to_table(lower(lvl1), '[_\-]+') AS token FROM path_parts WHERE lvl1 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(lvl2), '[_\-]+') FROM path_parts WHERE lvl2 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(lvl3), '[_\-]+') FROM path_parts WHERE lvl3 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(filename), '[_\-\.]+') FROM path_parts
+  UNION ALL SELECT id, regexp_split_to_table(lower(title), '[_\-\. ]+') FROM path_parts
+),
+canonical_tokens AS (
+  SELECT id,
+    CASE
+      WHEN token IN ('iosxe', 'ios-xe') THEN 'ios-xe'
+      WHEN token IN ('iosxe', 'ios-xe') THEN 'ios-xe'
+      WHEN token IN ('iosxr', 'ios-xr') THEN 'ios-xr'
+      WHEN token IN ('sdwan', 'sd-wan') THEN 'sdwan'
+      -- NO routeros → mikrotik mapping
+      ELSE token
+    END AS canonical_token
+  FROM norm_tokens
+  WHERE token ~ '^[a-z0-9]+$' AND length(token) > 1
+),
+dict AS (
+  SELECT v AS token FROM unnest(ARRAY[
+    'cisco', 'juniper', 'mikrotik',
+    'huawei', 'fortinet', 'arista', 'paloalto',
+    'aruba', 'ubiquiti', 'nokia', 'h3c',
+    'extreme', 'dell', 'avaya', 'alcatel',
+    'checkpoint', 'f5', 'a10', 'infoblox'
+  ]) AS v
+)
+SELECT 'no_vendor_token' AS metric, count(*) AS cnt
+FROM path_parts p
+WHERE NOT EXISTS (
+  SELECT 1 FROM canonical_tokens c
+  JOIN dict d ON c.canonical_token = d.token
+  WHERE c.id = p.id
+);
+
+-- =====================================================================
+-- 14. Records with NO platform token (IDENTICAL CTE chain as positive Platform query)
+-- =====================================================================
+WITH meta AS (
+  SELECT id, title,
+    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
+  FROM "KnowledgeBaseArticle"
+  WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
+),
+path_parts AS (
+  SELECT id, title,
+    split_part(source_path, '/', 1) AS lvl1,
+    split_part(source_path, '/', 2) AS lvl2,
+    split_part(source_path, '/', 3) AS lvl3,
+    split_part(source_path, '/', -1) AS filename
+  FROM meta
+),
+norm_tokens AS (
+  SELECT id, regexp_split_to_table(lower(lvl1), '[_\-]+') AS token FROM path_parts WHERE lvl1 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(lvl2), '[_\-]+') FROM path_parts WHERE lvl2 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(lvl3), '[_\-]+') FROM path_parts WHERE lvl3 IS NOT NULL
+  UNION ALL SELECT id, regexp_split_to_table(lower(filename), '[_\-\.]+') FROM path_parts
+  UNION ALL SELECT id, regexp_split_to_table(lower(title), '[_\-\. ]+') FROM path_parts
+),
+canonical_tokens AS (
+  SELECT id,
+    CASE
+      WHEN token IN ('iosxe', 'ios-xe') THEN 'ios-xe'
+      WHEN token IN ('iosxr', 'ios-xr') THEN 'ios-xr'
+      WHEN token IN ('sdwan', 'sd-wan') THEN 'sdwan'
+      WHEN token IN ('mikrotik') THEN 'mikrotik'
+      ELSE token
+    END AS canonical_token
+  FROM norm_tokens
+  WHERE token ~ '^[a-z0-9]+$' AND length(token) > 1
+),
+dict AS (
+  SELECT p AS token FROM unnest(ARRAY[
+    'ios-xe', 'ios-xr', 'nxos',
+    'junos', 'routeros', 'fortios', 'panos',
+    'vmanage', 'vsmart', 'vbond',
+    'catalyst', 'nexus', 'asr', 'isr', 'csr',
+    'qfx', 'ptx', 'ccr', 'crs',
+    'fortigate', 'fortiswitch', 'fortiap'
+  ]) AS p
+)
+SELECT 'no_platform_token' AS metric, count(*) AS cnt
+FROM path_parts p
+WHERE NOT EXISTS (
+  SELECT 1 FROM canonical_tokens c
+  JOIN dict d ON c.canonical_token = d.token
+  WHERE c.id = p.id
+);
+
+-- =====================================================================
+-- 15. Validation: Total article count
 -- =====================================================================
 WITH meta AS (
   SELECT count(*) AS total_articles
