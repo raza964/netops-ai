@@ -251,23 +251,45 @@ path_parts AS (
   FROM meta
 ),
 norm_tokens AS (
-  SELECT id, regexp_split_to_table(lower(lvl1), '[_\-]+') AS token FROM path_parts WHERE lvl1 IS NOT NULL
-  UNION ALL SELECT id, regexp_split_to_table(lower(lvl2), '[_\-]+') FROM path_parts WHERE lvl2 IS NOT NULL
-  UNION ALL SELECT id, regexp_split_to_table(lower(lvl3), '[_\-]+') FROM path_parts WHERE lvl3 IS NOT NULL
-  UNION ALL SELECT id, regexp_split_to_table(lower(filename), '[_\-\.]+') FROM path_parts
-  UNION ALL SELECT id, regexp_split_to_table(lower(title), '[_\-\. ]+') FROM path_parts
+  SELECT id, 'lvl1' AS source_name, t.ordinal, t.token 
+  FROM path_parts, LATERAL regexp_split_to_table(lower(lvl1), '[_\-]+') WITH ORDINALITY AS t(token, ordinal)
+  WHERE lvl1 IS NOT NULL
+  UNION ALL SELECT id, 'lvl2', t.ordinal, t.token 
+  FROM path_parts, LATERAL regexp_split_to_table(lower(lvl2), '[_\-]+') WITH ORDINALITY AS t(token, ordinal)
+  WHERE lvl2 IS NOT NULL
+  UNION ALL SELECT id, 'lvl3', t.ordinal, t.token 
+  FROM path_parts, LATERAL regexp_split_to_table(lower(lvl3), '[_\-]+') WITH ORDINALITY AS t(token, ordinal)
+  WHERE lvl3 IS NOT NULL
+  UNION ALL SELECT id, 'filename', t.ordinal, t.token 
+  FROM path_parts, LATERAL regexp_split_to_table(lower(filename), '[_\-\.]+') WITH ORDINALITY AS t(token, ordinal)
+  WHERE filename IS NOT NULL
+  UNION ALL SELECT id, 'title', t.ordinal, t.token 
+  FROM path_parts, LATERAL regexp_split_to_table(lower(title), '[_\-\. ]+') WITH ORDINALITY AS t(token, ordinal)
+),
+bigrams AS (
+  SELECT n1.id, n1.source_name, n1.token || ' ' || n2.token AS bigram_token
+  FROM norm_tokens n1
+  JOIN norm_tokens n2 
+    ON n1.id = n2.id 
+   AND n1.source_name = n2.source_name
+   AND n2.ordinal = n1.ordinal + 1
+),
+combined_tokens AS (
+  SELECT id, token AS evidence_token FROM norm_tokens WHERE length(token) > 1 AND token ~ '^[a-z0-9]+$'
+  UNION ALL
+  SELECT id, bigram_token FROM bigrams WHERE length(bigram_token) > 1 AND bigram_token ~ '^[a-z0-9 ]+$'
 ),
 canonical_tokens AS (
   SELECT id,
     CASE
-      WHEN token IN ('iosxe', 'ios-xe') THEN 'ios-xe'
-      WHEN token IN ('iosxr', 'ios-xr') THEN 'ios-xr'
-      WHEN token IN ('sdwan', 'sd-wan') THEN 'sdwan'
-      WHEN token IN ('mikrotik') THEN 'mikrotik'
-      ELSE token
+      WHEN evidence_token IN ('iosxe', 'ios xe') THEN 'ios-xe'
+      WHEN evidence_token IN ('iosxr', 'ios xr') THEN 'ios-xr'
+      WHEN evidence_token IN ('sdwan', 'sd-wan', 'sd wan') THEN 'sdwan'
+      WHEN evidence_token IN ('mikrotik') THEN 'mikrotik'
+      ELSE evidence_token
     END AS canonical_token
-  FROM norm_tokens
-  WHERE token ~ '^[a-z0-9]+$' AND length(token) > 1
+  FROM combined_tokens
+  WHERE length(evidence_token) > 1 AND evidence_token ~ '^[a-z0-9 ]+$'
 ),
 dict AS (
   SELECT p AS token FROM unnest(ARRAY[
@@ -304,21 +326,43 @@ path_parts AS (
   FROM meta
 ),
 norm_tokens AS (
-  SELECT id, regexp_split_to_table(lower(lvl1), '[_\-]+') AS token FROM path_parts WHERE lvl1 IS NOT NULL
-  UNION ALL SELECT id, regexp_split_to_table(lower(lvl2), '[_\-]+') FROM path_parts WHERE lvl2 IS NOT NULL
-  UNION ALL SELECT id, regexp_split_to_table(lower(lvl3), '[_\-]+') FROM path_parts WHERE lvl3 IS NOT NULL
-  UNION ALL SELECT id, regexp_split_to_table(lower(filename), '[_\-\.]+') FROM path_parts
-  UNION ALL SELECT id, regexp_split_to_table(lower(title), '[_\-\. ]+') FROM path_parts
+  SELECT id, 'lvl1' AS source_name, t.ordinal, t.token 
+  FROM path_parts, LATERAL regexp_split_to_table(lower(lvl1), '[_\-]+') WITH ORDINALITY AS t(token, ordinal)
+  WHERE lvl1 IS NOT NULL
+  UNION ALL SELECT id, 'lvl2', t.ordinal, t.token 
+  FROM path_parts, LATERAL regexp_split_to_table(lower(lvl2), '[_\-]+') WITH ORDINALITY AS t(token, ordinal)
+  WHERE lvl2 IS NOT NULL
+  UNION ALL SELECT id, 'lvl3', t.ordinal, t.token 
+  FROM path_parts, LATERAL regexp_split_to_table(lower(lvl3), '[_\-]+') WITH ORDINALITY AS t(token, ordinal)
+  WHERE lvl3 IS NOT NULL
+  UNION ALL SELECT id, 'filename', t.ordinal, t.token 
+  FROM path_parts, LATERAL regexp_split_to_table(lower(filename), '[_\-\.]+') WITH ORDINALITY AS t(token, ordinal)
+  WHERE filename IS NOT NULL
+  UNION ALL SELECT id, 'title', t.ordinal, t.token 
+  FROM path_parts, LATERAL regexp_split_to_table(lower(title), '[_\-\. ]+') WITH ORDINALITY AS t(token, ordinal)
+),
+bigrams AS (
+  SELECT n1.id, n1.source_name, n1.token || ' ' || n2.token AS bigram_token
+  FROM norm_tokens n1
+  JOIN norm_tokens n2 
+    ON n1.id = n2.id 
+   AND n1.source_name = n2.source_name
+   AND n2.ordinal = n1.ordinal + 1
+),
+combined_tokens AS (
+  SELECT id, token AS evidence_token FROM norm_tokens WHERE length(token) > 1 AND token ~ '^[a-z0-9]+$'
+  UNION ALL
+  SELECT id, bigram_token FROM bigrams WHERE length(bigram_token) > 1 AND bigram_token ~ '^[a-z0-9 ]+$'
 ),
 canonical_tokens AS (
   SELECT id,
     CASE
-      WHEN token IN ('sdwan', 'sd-wan') THEN 'sdwan'
-      WHEN token IN ('ci-cd', 'cicd') THEN 'ci-cd'
-      ELSE token
+      WHEN evidence_token IN ('sdwan', 'sd-wan', 'sd wan') THEN 'sdwan'
+      WHEN evidence_token IN ('ci-cd', 'cicd') THEN 'ci-cd'
+      ELSE evidence_token
     END AS canonical_token
-  FROM norm_tokens
-  WHERE token ~ '^[a-z0-9]+$' AND length(token) > 1
+  FROM combined_tokens
+  WHERE length(evidence_token) > 1 AND evidence_token ~ '^[a-z0-9 ]+$'
 ),
 dict AS (
   SELECT pt AS token FROM unnest(ARRAY[
