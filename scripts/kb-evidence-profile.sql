@@ -182,11 +182,6 @@ SELECT 'title_sample' AS metric, category, title
 FROM ranked WHERE rn <= 3 ORDER BY category, rn;
 
 -- =====================================================================
--- Canonical token aliases (hyphen/variant normalization)
--- =====================================================================
--- Each query below uses its own canonical_tokens CTE with aliases
-
--- =====================================================================
 -- 10. Vendor tokens (boundary-aware, exact normalized token match + aliases)
 -- =====================================================================
 WITH meta AS (
@@ -217,7 +212,7 @@ canonical_tokens AS (
       WHEN token IN ('iosxe', 'ios-xe') THEN 'ios-xe'
       WHEN token IN ('iosxr', 'ios-xr') THEN 'ios-xr'
       WHEN token IN ('sdwan', 'sd-wan') THEN 'sdwan'
-      WHEN token IN ('mikrotik', 'routeros') THEN 'mikrotik'
+      -- NO routeros → mikrotik mapping here. routeros is platform-only.
       ELSE token
     END AS canonical_token
   FROM norm_tokens
@@ -240,7 +235,7 @@ JOIN dict d ON c.canonical_token = d.token
 GROUP BY c.canonical_token ORDER BY article_cnt DESC;
 
 -- =====================================================================
--- 11. Platform tokens (high-specificity only, with canonical aliases)
+-- 11. Platform tokens (HIGH-SPECIFICITY ONLY, with canonical aliases)
 -- =====================================================================
 WITH meta AS (
   SELECT id, title,
@@ -278,16 +273,11 @@ canonical_tokens AS (
 dict AS (
   SELECT p AS token FROM unnest(ARRAY[
     'ios-xe', 'ios-xr', 'nxos',
-    'junos', 'routeros', 'vrp', 'eos',
-    'linux', 'windows', 'fortios', 'panos',
-    'aos', 'gaia', 'tmos', 'acos',
+    'junos', 'routeros', 'fortios', 'panos',
     'vmanage', 'vsmart', 'vbond',
     'catalyst', 'nexus', 'asr', 'isr', 'csr',
-    'mx', 'srx', 'ex', 'qfx', 'ptx',
-    'ccr', 'crs', 'rb', 'ch',
-    'ne', 'ar', 's', 'ce', 'atlas',
-    'fortigate', 'fortiswitch', 'fortiap',
-    'pa', 'vm', 'cn'
+    'qfx', 'ptx', 'ccr', 'crs',
+    'fortigate', 'fortiswitch', 'fortiap'
   ]) AS p
 )
 SELECT 'platform_token' AS metric,
@@ -356,16 +346,16 @@ JOIN dict d ON c.canonical_token = d.token
 GROUP BY c.canonical_token ORDER BY article_cnt DESC;
 
 -- =====================================================================
--- 13. Records with NO vendor token (identical evidence sources as positive)
+-- 13. Records with NO vendor token (IDENTICAL CTE chain as positive Vendor query)
 -- =====================================================================
 WITH meta AS (
-  SELECT id,
+  SELECT id, title,
     (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
   FROM "KnowledgeBaseArticle"
   WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
 ),
 path_parts AS (
-  SELECT id,
+  SELECT id, title,
     split_part(source_path, '/', 1) AS lvl1,
     split_part(source_path, '/', 2) AS lvl2,
     split_part(source_path, '/', 3) AS lvl3,
@@ -377,6 +367,7 @@ norm_tokens AS (
   UNION ALL SELECT id, regexp_split_to_table(lower(lvl2), '[_\-]+') FROM path_parts WHERE lvl2 IS NOT NULL
   UNION ALL SELECT id, regexp_split_to_table(lower(lvl3), '[_\-]+') FROM path_parts WHERE lvl3 IS NOT NULL
   UNION ALL SELECT id, regexp_split_to_table(lower(filename), '[_\-\.]+') FROM path_parts
+  UNION ALL SELECT id, regexp_split_to_table(lower(title), '[_\-\. ]+') FROM path_parts
 ),
 canonical_tokens AS (
   SELECT id,
@@ -385,7 +376,7 @@ canonical_tokens AS (
       WHEN token IN ('iosxe', 'ios-xe') THEN 'ios-xe'
       WHEN token IN ('iosxr', 'ios-xr') THEN 'ios-xr'
       WHEN token IN ('sdwan', 'sd-wan') THEN 'sdwan'
-      WHEN token IN ('mikrotik', 'routeros') THEN 'mikrotik'
+      -- NO routeros → mikrotik mapping
       ELSE token
     END AS canonical_token
   FROM norm_tokens
@@ -409,16 +400,16 @@ WHERE NOT EXISTS (
 );
 
 -- =====================================================================
--- 14. Records with NO platform token (identical evidence sources as positive)
+-- 14. Records with NO platform token (IDENTICAL CTE chain as positive Platform query)
 -- =====================================================================
 WITH meta AS (
-  SELECT id,
+  SELECT id, title,
     (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
   FROM "KnowledgeBaseArticle"
   WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
 ),
 path_parts AS (
-  SELECT id,
+  SELECT id, title,
     split_part(source_path, '/', 1) AS lvl1,
     split_part(source_path, '/', 2) AS lvl2,
     split_part(source_path, '/', 3) AS lvl3,
@@ -430,6 +421,7 @@ norm_tokens AS (
   UNION ALL SELECT id, regexp_split_to_table(lower(lvl2), '[_\-]+') FROM path_parts WHERE lvl2 IS NOT NULL
   UNION ALL SELECT id, regexp_split_to_table(lower(lvl3), '[_\-]+') FROM path_parts WHERE lvl3 IS NOT NULL
   UNION ALL SELECT id, regexp_split_to_table(lower(filename), '[_\-\.]+') FROM path_parts
+  UNION ALL SELECT id, regexp_split_to_table(lower(title), '[_\-\. ]+') FROM path_parts
 ),
 canonical_tokens AS (
   SELECT id,
@@ -446,16 +438,11 @@ canonical_tokens AS (
 dict AS (
   SELECT p AS token FROM unnest(ARRAY[
     'ios-xe', 'ios-xr', 'nxos',
-    'junos', 'routeros', 'vrp', 'eos',
-    'linux', 'windows', 'fortios', 'panos',
-    'aos', 'gaia', 'tmos', 'acos',
+    'junos', 'routeros', 'fortios', 'panos',
     'vmanage', 'vsmart', 'vbond',
     'catalyst', 'nexus', 'asr', 'isr', 'csr',
-    'mx', 'srx', 'ex', 'qfx', 'ptx',
-    'ccr', 'crs', 'rb', 'ch',
-    'ne', 'ar', 's', 'ce', 'atlas',
-    'fortigate', 'fortiswitch', 'fortiap',
-    'pa', 'vm', 'cn'
+    'qfx', 'ptx', 'ccr', 'crs',
+    'fortigate', 'fortiswitch', 'fortiap'
   ]) AS p
 )
 SELECT 'no_platform_token' AS metric, count(*) AS cnt
