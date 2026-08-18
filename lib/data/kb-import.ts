@@ -7,6 +7,7 @@ import type { KbImportBatch } from "../validation/kb-import";
 export type ImportResult = {
   created: number;
   updated: number;
+  articleIds: string[];
   failed: Array<{ name: string; error: string }>;
 };
 
@@ -125,17 +126,17 @@ export async function importKnowledgeBatch(input: KbImportBatch, createdById: st
     }),
   );
 
-  const result: ImportResult = { created: 0, updated: 0, failed: [] };
+  const result: ImportResult = { created: 0, updated: 0, articleIds: [], failed: [] };
   settled.forEach((outcome, index) => {
     if (outcome.status === "rejected") {
       result.failed.push({
         name: prepared[index].file.name,
         error: outcome.reason instanceof Error ? outcome.reason.message : "Unknown import error",
       });
-    } else if (existingIds[index]) {
-      result.updated += 1;
     } else {
-      result.created += 1;
+      result.articleIds.push(outcome.value.id);
+      if (existingIds[index]) result.updated += 1;
+      else result.created += 1;
     }
   });
   return result;
