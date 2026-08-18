@@ -12,17 +12,18 @@
 WITH meta AS (
   SELECT
     id,
-    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
+    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path,
+    replace((regexp_match(content, 'source_path: ([^\r\n]+)'))[1], chr(92), '/') AS normalized_source_path
   FROM "KnowledgeBaseArticle"
   WHERE "deletedAt" IS NULL
     AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
 ),
 path_parts AS (
   SELECT
-    source_path,
-    split_part(source_path, '/', 1) AS lvl1,
-    split_part(source_path, '/', 2) AS lvl2,
-    split_part(source_path, '/', 3) AS lvl3
+    normalized_source_path,
+    split_part(normalized_source_path, '/', 1) AS lvl1,
+    split_part(normalized_source_path, '/', 2) AS lvl2,
+    split_part(normalized_source_path, '/', 3) AS lvl3
   FROM meta
 )
 SELECT 'path_depth' AS metric,
@@ -37,12 +38,13 @@ GROUP BY depth ORDER BY depth;
 -- 2. First-level segments (lvl1)
 -- =====================================================================
 WITH meta AS (
-  SELECT (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
+  SELECT (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path,
+    replace((regexp_match(content, 'source_path: ([^\r\n]+)'))[1], chr(92), '/') AS normalized_source_path
   FROM "KnowledgeBaseArticle"
   WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
 ),
 path_parts AS (
-  SELECT split_part(source_path, '/', 1) AS lvl1 FROM meta
+  SELECT split_part(normalized_source_path, '/', 1) AS lvl1 FROM meta
 )
 SELECT 'lvl1_segment' AS metric, lvl1 AS segment, count(*) AS cnt
 FROM path_parts GROUP BY lvl1 ORDER BY cnt DESC;
@@ -51,12 +53,13 @@ FROM path_parts GROUP BY lvl1 ORDER BY cnt DESC;
 -- 3. Second-level segments (lvl2)
 -- =====================================================================
 WITH meta AS (
-  SELECT (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
+  SELECT (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path,
+    replace((regexp_match(content, 'source_path: ([^\r\n]+)'))[1], chr(92), '/') AS normalized_source_path
   FROM "KnowledgeBaseArticle"
   WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
 ),
 path_parts AS (
-  SELECT split_part(source_path, '/', 2) AS lvl2 FROM meta
+  SELECT split_part(normalized_source_path, '/', 2) AS lvl2 FROM meta
 )
 SELECT 'lvl2_segment' AS metric, lvl2 AS segment, count(*) AS cnt
 FROM path_parts
@@ -67,12 +70,13 @@ GROUP BY lvl2 ORDER BY cnt DESC;
 -- 4. Third-level segments (lvl3)
 -- =====================================================================
 WITH meta AS (
-  SELECT (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
+  SELECT (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path,
+    replace((regexp_match(content, 'source_path: ([^\r\n]+)'))[1], chr(92), '/') AS normalized_source_path
   FROM "KnowledgeBaseArticle"
   WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
 ),
 path_parts AS (
-  SELECT split_part(source_path, '/', 3) AS lvl3 FROM meta
+  SELECT split_part(normalized_source_path, '/', 3) AS lvl3 FROM meta
 )
 SELECT 'lvl3_segment' AS metric, lvl3 AS segment, count(*) AS cnt
 FROM path_parts
@@ -83,12 +87,13 @@ GROUP BY lvl3 ORDER BY cnt DESC LIMIT 50;
 -- 5. Filenames (derived from source_path)
 -- =====================================================================
 WITH meta AS (
-  SELECT (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
+  SELECT (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path,
+    replace((regexp_match(content, 'source_path: ([^\r\n]+)'))[1], chr(92), '/') AS normalized_source_path
   FROM "KnowledgeBaseArticle"
   WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
 ),
 path_parts AS (
-  SELECT split_part(source_path, '/', -1) AS filename FROM meta
+  SELECT split_part(normalized_source_path, '/', -1) AS filename FROM meta
 )
 SELECT 'filename' AS metric, filename, count(*) AS cnt
 FROM path_parts GROUP BY filename ORDER BY cnt DESC LIMIT 100;
@@ -97,16 +102,17 @@ FROM path_parts GROUP BY filename ORDER BY cnt DESC LIMIT 100;
 -- 6. File extensions
 -- =====================================================================
 WITH meta AS (
-  SELECT (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
+  SELECT (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path,
+    replace((regexp_match(content, 'source_path: ([^\r\n]+)'))[1], chr(92), '/') AS normalized_source_path
   FROM "KnowledgeBaseArticle"
   WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
 ),
 path_parts AS (
   SELECT
-    split_part(source_path, '/', -1) AS filename,
+    split_part(normalized_source_path, '/', -1) AS filename,
     CASE
-      WHEN split_part(source_path, '/', -1) ~ '\.([a-zA-Z0-9]+)$'
-      THEN (regexp_match(split_part(source_path, '/', -1), '\.([a-zA-Z0-9]+)$'))[1]
+      WHEN split_part(normalized_source_path, '/', -1) ~ '\.([a-zA-Z0-9]+)$'
+      THEN (regexp_match(split_part(normalized_source_path, '/', -1), '\.([a-zA-Z0-9]+)$'))[1]
       ELSE 'no_extension'
     END AS extension
   FROM meta
@@ -119,17 +125,18 @@ FROM path_parts GROUP BY extension ORDER BY cnt DESC;
 -- =====================================================================
 WITH meta AS (
   SELECT id, title,
-    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
+    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path,
+    replace((regexp_match(content, 'source_path: ([^\r\n]+)'))[1], chr(92), '/') AS normalized_source_path
   FROM "KnowledgeBaseArticle"
   WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
 ),
 path_parts AS (
   SELECT
     id, title,
-    split_part(source_path, '/', 1) AS lvl1,
-    split_part(source_path, '/', 2) AS lvl2,
-    split_part(source_path, '/', 3) AS lvl3,
-    split_part(source_path, '/', -1) AS filename
+    split_part(normalized_source_path, '/', 1) AS lvl1,
+    split_part(normalized_source_path, '/', 2) AS lvl2,
+    split_part(normalized_source_path, '/', 3) AS lvl3,
+    split_part(normalized_source_path, '/', -1) AS filename
   FROM meta
 ),
 norm_tokens AS (
@@ -153,12 +160,13 @@ GROUP BY token ORDER BY article_cnt DESC LIMIT 150;
 WITH meta AS (
   SELECT
     (regexp_match(content, 'category: ([^\r\n]+)'))[1] AS category,
-    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
+    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path,
+    replace((regexp_match(content, 'source_path: ([^\r\n]+)'))[1], chr(92), '/') AS normalized_source_path
   FROM "KnowledgeBaseArticle"
   WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
 ),
 path_parts AS (
-  SELECT category, split_part(source_path, '/', 1) AS lvl1 FROM meta
+  SELECT category, split_part(normalized_source_path, '/', 1) AS lvl1 FROM meta
 )
 SELECT 'category_lvl1' AS metric, category, lvl1, count(*) AS cnt
 FROM path_parts GROUP BY category, lvl1 ORDER BY category, cnt DESC;
@@ -186,16 +194,17 @@ FROM ranked WHERE rn <= 3 ORDER BY category, rn;
 -- =====================================================================
 WITH meta AS (
   SELECT id, title,
-    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
+    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path,
+    replace((regexp_match(content, 'source_path: ([^\r\n]+)'))[1], chr(92), '/') AS normalized_source_path
   FROM "KnowledgeBaseArticle"
   WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
 ),
 path_parts AS (
   SELECT id, title,
-    split_part(source_path, '/', 1) AS lvl1,
-    split_part(source_path, '/', 2) AS lvl2,
-    split_part(source_path, '/', 3) AS lvl3,
-    split_part(source_path, '/', -1) AS filename
+    split_part(normalized_source_path, '/', 1) AS lvl1,
+    split_part(normalized_source_path, '/', 2) AS lvl2,
+    split_part(normalized_source_path, '/', 3) AS lvl3,
+    split_part(normalized_source_path, '/', -1) AS filename
   FROM meta
 ),
 norm_tokens AS (
@@ -238,16 +247,17 @@ GROUP BY c.canonical_token ORDER BY article_cnt DESC;
 -- =====================================================================
 WITH meta AS (
   SELECT id, title,
-    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
+    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path,
+    replace((regexp_match(content, 'source_path: ([^\r\n]+)'))[1], chr(92), '/') AS normalized_source_path
   FROM "KnowledgeBaseArticle"
   WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
 ),
 path_parts AS (
   SELECT id, title,
-    split_part(source_path, '/', 1) AS lvl1,
-    split_part(source_path, '/', 2) AS lvl2,
-    split_part(source_path, '/', 3) AS lvl3,
-    split_part(source_path, '/', -1) AS filename
+    split_part(normalized_source_path, '/', 1) AS lvl1,
+    split_part(normalized_source_path, '/', 2) AS lvl2,
+    split_part(normalized_source_path, '/', 3) AS lvl3,
+    split_part(normalized_source_path, '/', -1) AS filename
   FROM meta
 ),
 norm_tokens AS (
@@ -313,16 +323,17 @@ GROUP BY c.canonical_token ORDER BY article_cnt DESC;
 -- =====================================================================
 WITH meta AS (
   SELECT id, title,
-    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
+    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path,
+    replace((regexp_match(content, 'source_path: ([^\r\n]+)'))[1], chr(92), '/') AS normalized_source_path
   FROM "KnowledgeBaseArticle"
   WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
 ),
 path_parts AS (
   SELECT id, title,
-    split_part(source_path, '/', 1) AS lvl1,
-    split_part(source_path, '/', 2) AS lvl2,
-    split_part(source_path, '/', 3) AS lvl3,
-    split_part(source_path, '/', -1) AS filename
+    split_part(normalized_source_path, '/', 1) AS lvl1,
+    split_part(normalized_source_path, '/', 2) AS lvl2,
+    split_part(normalized_source_path, '/', 3) AS lvl3,
+    split_part(normalized_source_path, '/', -1) AS filename
   FROM meta
 ),
 norm_tokens AS (
@@ -393,16 +404,17 @@ GROUP BY c.canonical_token ORDER BY article_cnt DESC;
 -- =====================================================================
 WITH meta AS (
   SELECT id, title,
-    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
+    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path,
+    replace((regexp_match(content, 'source_path: ([^\r\n]+)'))[1], chr(92), '/') AS normalized_source_path
   FROM "KnowledgeBaseArticle"
   WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
 ),
 path_parts AS (
   SELECT id, title,
-    split_part(source_path, '/', 1) AS lvl1,
-    split_part(source_path, '/', 2) AS lvl2,
-    split_part(source_path, '/', 3) AS lvl3,
-    split_part(source_path, '/', -1) AS filename
+    split_part(normalized_source_path, '/', 1) AS lvl1,
+    split_part(normalized_source_path, '/', 2) AS lvl2,
+    split_part(normalized_source_path, '/', 3) AS lvl3,
+    split_part(normalized_source_path, '/', -1) AS filename
   FROM meta
 ),
 norm_tokens AS (
@@ -447,16 +459,17 @@ WHERE NOT EXISTS (
 -- =====================================================================
 WITH meta AS (
   SELECT id, title,
-    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path
+    (regexp_match(content, 'source_path: ([^\r\n]+)'))[1] AS source_path,
+    replace((regexp_match(content, 'source_path: ([^\r\n]+)'))[1], chr(92), '/') AS normalized_source_path
   FROM "KnowledgeBaseArticle"
   WHERE "deletedAt" IS NULL AND content LIKE '%NETOPS_AI_SOURCE_METADATA%'
 ),
 path_parts AS (
   SELECT id, title,
-    split_part(source_path, '/', 1) AS lvl1,
-    split_part(source_path, '/', 2) AS lvl2,
-    split_part(source_path, '/', 3) AS lvl3,
-    split_part(source_path, '/', -1) AS filename
+    split_part(normalized_source_path, '/', 1) AS lvl1,
+    split_part(normalized_source_path, '/', 2) AS lvl2,
+    split_part(normalized_source_path, '/', 3) AS lvl3,
+    split_part(normalized_source_path, '/', -1) AS filename
   FROM meta
 ),
 norm_tokens AS (
@@ -471,6 +484,7 @@ norm_tokens AS (
   WHERE lvl3 IS NOT NULL
   UNION ALL SELECT id, 'filename', t.ordinal, t.token 
   FROM path_parts, LATERAL regexp_split_to_table(lower(filename), '[_\-\.]+') WITH ORDINALITY AS t(token, ordinal)
+  WHERE filename IS NOT NULL
   UNION ALL SELECT id, 'title', t.ordinal, t.token 
   FROM path_parts, LATERAL regexp_split_to_table(lower(title), '[_\-\. ]+') WITH ORDINALITY AS t(token, ordinal)
 ),
