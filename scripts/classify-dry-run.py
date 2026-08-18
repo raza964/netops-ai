@@ -2,152 +2,233 @@
 """
 Classification dry-run for NetOps AI KB articles.
 Read-only: connects via DATABASE_URL env var, does not modify production data.
-Produces one classification record per article with all required fields.
-Outputs summary counts and counts by vendor, platform, domain, protocol, content type, collection.
-Verifies: classified_record_count = 1314, summary buckets sum to 1314,
-collection totals: CHAT=732, LECTURE=555, RESTRICTED_OPERATIONS=27
+Uses the same regex evidence extraction as kb-evidence-profile.sql.
+Verifies collection totals: CHAT=732, LECTURE=555, RESTRICTED_OPERATIONS=27
 """
 
 import os
 import sys
-import json
-import hashlib
+import re
 import psycopg2
 from collections import Counter
 
+# Clean domain dictionary (NOT derived from legacy category)
+DOMAIN_DICT = {
+    'Routing': 'Routing',
+    'Switching': 'Switching', 
+    'MPLS': 'MPLS',
+    'VPN': 'VPN',
+    'Security': 'Security',
+    'Wireless': 'Wireless',
+    'GPON/FTTH': 'GPON/FTTH',
+    'Network Management': 'Network Management',
+    'AAA': 'AAA',
+    'QoS': 'QoS',
+    'IPv6': 'IPv6',
+    'Data Center': 'Data Center',
+    'Virtualization': 'Virtualization',
+    'Systems': 'Systems',
+    'Automation': 'Automation',
+    'Cloud/DevOps': 'Cloud/DevOps',
+}
+
+def extract_metadata(content):
+    """Extract metadata from article content using the same regex logic as kb-evidence-profile.sql."""
+    if not content:
+        return {
+            'source_path': None,
+            'category': None,
+            'sensitivity': None,
+            'review_status': None,
+            'publication_status': None,
+            'sha256': None,
+        }
+    
+    # Extract source_path using same regex as kb-evidence-profile.sql
+    sp_match = re.search(r"source_path:\s*([^\r\n]+)", content)
+    source_path = sp_match.group(1).strip() if sp_match else None
+    
+    # Extract category using same regex
+    cat_match = re.search(r"category:\s*([^\r\n]+)", content)
+    category = cat_match.group(1).strip() if cat_match else None
+    
+    # Extract sensitivity - using pattern similar to other fields
+    sens_match = re.search(r"sensitivity:\s*([^\r\n]+)", content)
+    sensitivity = sens_match.group(1).strip() if sens_match else None
+    
+    # Extract review_status
+    rs_match = re.search(r"review_status:\s*([^\r\n]+)", content)
+    review_status = rs_match.group(1).strip() if rs_match else None
+    
+    # Extract publication_status
+    ps_match = re.search(r"publication_status:\s*([^\r\n]+)", content)
+    publication_status = ps_match.group(1).strip() if ps_match else None
+    
+    # Extract sha256
+    sha_match = re.search(r"sha256:\s*([^\r\n]+)", content)
+    sha256 = sha_match.group(1).strip() if sha_match else None
+    
+    return {
+        'source_path': source_path,
+        'category': category,
+        'sensitivity': sensitivity,
+        'review_status': review_status,
+        'publication_status': publication_status,
+        'sha256': sha256,
+    }
+
+def classify_domain(platform_tokens):
+    """Determine knowledge domain from platform evidence, NOT from legacy category."""
+    if not platform_tokens:
+        return None
+    
+    # Derive domain from platform evidence tokens
+    detected = set(platform_tokens)
+    
+    if 'ios-xe' in detected or 'ios-xr' in detected or 'sdwan' in detected:
+        return 'Routing'  # Routing, Switching, MPLS
+    elif detected:
+        # Check for specific domain indicators in platform tokens
+        for token in detected:
+            if token in DOMAIN_DICT:
+                return DOMAIN_DICT[token]
+    
+    return None  # Insufficient evidence
+
+def classify_content_type(platform_tokens):
+    """Determine content type from platform evidence. NULL if insufficient."""
+    if not platform_tokens:
+        return None
+    
+    detected = set(platform_tokens)
+    
+    if 'ios-xe' in detected:
+        return 'configuration guide'
+    elif 'ios-xr' in detected:
+        return 'BGP/routing configuration'
+    elif 'sdwan' in detected:
+        return 'deployment guide'
+    
+    return None  # No evidence → NULL, not "configuration" default
+
+def classify_vendor_scope(detected_vendors):
+    """Vendor scope rules per spec."""
+    if len(detected_vendors) == 1:
+        return 'SPECIFIC_VENDOR', detected_vendors[0]
+    elif len(detected_vendors) > 1:
+        return 'MULTI_VENDOR', ', '.join(sorted(detected_vendors))
+    elif 'vendor-neutral' in ' '.join(detected_vendors) if detected_vendors else '':
+        return 'VENDOR_NEUTRAL', None
+    else:
+        return 'UNDETERMINED', None
+
 def main():
-    # Read DATABASE_URL from environment
     database_url = os.environ.get('DATABASE_URL')
     if not database_url:
         print("ERROR: DATABASE_URL environment variable not set", file=sys.stderr)
         sys.exit(1)
     
     print(f"Connecting to database via DATABASE_URL...")
-    
     conn = psycopg2.connect(database_url)
     conn.autocommit = False
     
-    # Safety guard: BEGIN TRANSACTION READ ONLY
-    # Verify we're in read-only mode
+    # ============================================================
+    # Enforce true read-only transaction
+    # ============================================================
     with conn.cursor() as cur:
-        cur.execute("SHOW transaction_isolation;")
-        isolation = cur.fetchone()[0]
-        cur.execute("SHOW read_only;")
-        read_only = cur.fetchone()[0]
-        print(f"  transaction_isolation: {isolation}")
-        print(f"  read_only: {read_only}")
-    
-    # Safety guard: verify article count
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT count(*) FROM "KnowledgeBaseArticle" 
-            WHERE "deletedAt" IS NULL
-        """)
-        total_count = cur.fetchone()[0]
-    
-    expected_production_count = 1314
-    if total_count != expected_production_count:
-        print(f"ERROR: Expected {expected_production_count} articles, but found {total_count} in the database.")
-        conn.close()
-        sys.exit(1)
-    
-    print(f"  Verified article count: {total_count} (expected {expected_production_count})")
-    
-    # Also verify collection totals
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT category, count(*) as cnt 
-            FROM "KnowledgeBaseArticle" 
-            WHERE "deletedAt" IS NULL 
-            GROUP BY category
-        """)
-        collection_counts = {}
-        for row in cur.fetchall():
-            collection_counts[row[0]] = row[1]
-    
-    expected_collections = {
-        '01-routing-bgp-ospf-mpls': 732,  # CHAT
-        '05-cisco-and-enterprise-networking': 555,  # LECTURE
-        '02-bgp-related': 27  # RESTRICTED_OPERATIONS (need to check exact category)
-    }
-    
-    print(f"  Collection counts from DB: {collection_counts}")
-    
-    # Check if the categories match expected
-    chat_count = collection_counts.get('01-routing-bgp-ospf-mpls', 0)
-    lecture_count = collection_counts.get('05-cisco-and-enterprise-networking', 0)
-    restricted_count = sum(c for c in collection_counts.values() if c != chat_count and c != lecture_count)
-    
-    print(f"  CHAT (01-routing-bgp-ospf-mpls): {chat_count}")
-    print(f"  LECTURE (05-cisco-and-enterprise-networking): {lecture_count}")
-    print(f"  RESTRICTED_OPERATIONS: {restricted_count}")
-    
-    if chat_count != 732 or lecture_count != 555 or restricted_count != 27:
-        print("WARNING: Collection counts don't match expected values. Continuing anyway...")
+        cur.execute("BEGIN TRANSACTION READ ONLY;")
+        cur.execute("SHOW transaction_read_only;")
+        is_read_only = cur.fetchone()[0]
+        if not str(is_read_only).lower().startswith('on'):
+            print(f"ERROR: transaction_read_only is not enabled (got: {is_read_only})")
+            conn.rollback()
+            sys.exit(1)
+        print(f"  transaction_read_only is ON")
     
     # ============================================================
-    # CLASSIFICATION LOGIC (read-only, evidence-profile-based)
-    # ============================================================
-    # Uses the same boundary-aware, source-aware unigram/bigram logic
-    # as scripts/kb-evidence-profile.sql Sections 10-14
-    # ============================================================
-    
-    VENDOR_DICT = {'cisco', 'juniper', 'mikrotik', 'huawei', 'fortinet', 'arista', 'paloalto', 'aruba', 
-                   'ubiquiti', 'nokia', 'h3c', 'extreme', 'dell', 'avaya', 'alcatel', 'checkpoint', 'f5', 'a10', 'infoblox'}
-    
-    # Platform canonical tokens (from kb-evidence-profile.sql)
-    PLATFORM_CANONICAL = {
-        'iosxe': 'ios-xe', 'ios-xe': 'ios-xe',
-        'iosxr': 'ios-xr', 'ios-xr': 'ios-xr',
-        'sdwan': 'sdwan', 'sd-wan': 'sdwan', 'sd wan': 'sdwan',
-        'mikrotik': 'mikrotik',
-    }
-    
-    # Protocol tokens (from kb-evidence-profile.sql)
-    PROTOCOL_DICT = {'bgp', 'ospf', 'isis', 'eigrp', 'rip', 'static', 'ci-cd', 'cicd',
-                     'sdwan', 'vlan', 'stp', 'mstp', 'lacp', 'vpc', 'mlag', 'vxlan', 'evpn',
-                     'mpls', 'ldp', 'rsvp', 'te', 'atom', 'vpls', 'pseudowire',
-                     'ipsec', 'ikev2', 'ssl', 'vpn', 'gre', 'dmvpn',
-                     'pppoe', 'ppp', 'dhcp', 'dns', 'ipam',
-                     'radius', 'tacacs', 'aaa', 'dot1x', 'mab',
-                     'snmp', 'syslog', 'netflow', 'sflow', 'telemetry',
-                     'netconf', 'restconf', 'yang', 'gnmi',
-                     'ansible', 'terraform', 'python', 'gitops', 'ci-cd',
-                     'sdwan', 'viptela', 'meraki',
-                     'qos', 'multicast', 'pim', 'igmp', 'mld',
-                     'nat', 'firewall', 'acl', 'zone', 'policy'}
-    
-    KNOWLEDGE_DOMAINS = {
-        '01-routing-bgp-ospf-mpls': 'routing-bgp-ospf-mpls',
-        '02-bgp': 'bgp',
-        '05-cisco-and-enterprise-networking': 'cisco-enterprise',
-    }
-    
-    # Content type mapping (NO default to configuration)
-    CONTENT_TYPE_MAP = {
-        ('ios-xe',): 'configuration guide',
-        ('ios-xr',): 'BGP/routing configuration',
-        ('sdwan',): 'deployment guide',
-    }
-    
-    # ============================================================
-    # Fetch all articles
+    # Fetch all articles and extract metadata
     # ============================================================
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT id, title, source_path, category, 
-                   sensitivity, review_status, publication_status,
-                   sha256  -- assuming sha256 column exists; adjust if different
-            FROM "KnowledgeBaseArticle" 
+            SELECT id, title, content
+            FROM "KnowledgeBaseArticle"
             WHERE "deletedAt" IS NULL
             ORDER BY id
         """)
         articles = cur.fetchall()
     
-    print(f"  Total articles fetched: {len(articles)}")
+    fetched_count = len(articles)
+    print(f"  Fetched records: {fetched_count}")
+    
+    if fetched_count != 1314:
+        print(f"ERROR: Expected 1314 records, but fetched {fetched_count}")
+        conn.rollback()
+        sys.exit(1)
+    
+    print(f"  Verified: fetched records = 1314")
     
     # ============================================================
-    # Classify each article
+    # Extract metadata from each article content
+    # ============================================================
+    extracted = []
+    for article_id, title, content in articles:
+        meta = extract_metadata(content)
+        extracted.append({
+            'article_id': article_id,
+            'title': title,
+            'source_path': meta['source_path'],
+            'category': meta['category'],  # Legacy, NOT used as collection
+            'sensitivity': meta['sensitivity'],
+            'review_status': meta['review_status'],
+            'publication_status': meta['publication_status'],
+            'sha256': meta['sha256'],
+        })
+    
+    # ============================================================
+    # Verify collection totals from source_path metadata
+    # ============================================================
+    # Collection derived from source_path lvl1/lvl2, NOT from category
+    chat_count = 0
+    lecture_count = 0
+    restricted_count = 0
+    
+    for item in extracted:
+        sp = item['source_path']
+        if sp:
+            # Derive collection from source_path structure
+            # Per earlier analysis: lvl1 = knowledge-base, lvl2 = chat-knowledge/lecture-data/restricted-operations
+            parts = sp.replace('\\', '/').split('/')
+            if len(parts) >= 2:
+                lvl2 = parts[1] if len(parts) > 1 else ''
+                if lvl2 == 'chat-knowledge':
+                    chat_count += 1
+                elif lvl2 == 'lecture-data':
+                    lecture_count += 1
+                elif lvl2 == 'restricted-operations':
+                    restricted_count += 1
+    
+    print(f"  Collection from source_path metadata:")
+    print(f"    CHAT (chat-knowledge): {chat_count}")
+    print(f"    LECTURE (lecture-data): {lecture_count}")
+    print(f"    RESTRICTED_OPERATIONS (restricted-operations): {restricted_count}")
+    
+    if chat_count != 732:
+        print(f"ERROR: CHAT count expected 732, got {chat_count}")
+        conn.rollback()
+        sys.exit(1)
+    if lecture_count != 555:
+        print(f"ERROR: LECTURE count expected 555, got {lecture_count}")
+        conn.rollback()
+        sys.exit(1)
+    if restricted_count != 27:
+        print(f"ERROR: RESTRICTED_OPERATIONS count expected 27, got {restricted_count}")
+        conn.rollback()
+        sys.exit(1)
+    
+    print(f"  Verified: collection totals exactly 732/555/27")
+    
+    # ============================================================
+    # Classify each article using boundary-aware logic
     # ============================================================
     results = []
     summary = {
@@ -165,91 +246,64 @@ def main():
     content_type_counts = Counter()
     collection_counts_out = Counter()
     
-    no_vendor_evidence = 0
-    no_platform_evidence = 0
-    no_protocol_evidence = 0
-    
-    for i, article in enumerate(articles):
-        article_id, title, source_path, category, sensitivity, review_status, publication_status, sha256 = article
+    for item in extracted:
+        article_id = item['article_id']
+        title = item['title']
+        sp = item['source_path']
+        category = item['category']  # Legacy, weak evidence only
         
-        # === Extract metadata (REQUIRED - not hardcoded) ===
-        # collection comes from the actual data, not hardcoded
-        collection = category  # or a separate collection field if one exists
-        collection_counts_out[collection] += 1
-        
-        # source_path from actual data
-        sp = source_path if source_path else None
-        
-        # sha256 from actual data
-        article_sha256 = sha256  # will be None if column doesn't exist
-        
-        # sensitivity from actual data
-        sens = sensitivity
-        
-        # review_status from actual data
-        rs = review_status
-        
-        # publication_status from actual data
-        ps = publication_status
-        
-        # === VENDOR DETECTION (boundary-aware, source-aware) ===
+        # === Tokenize using same regex as kb-evidence-profile.sql ===
+        # Tokenizer splits on [_\-.+]
         title_lower = title.lower() if title else ""
-        sp_lower = sp.lower().replace('\\', '/') if sp else ""
         
-        # Tokenize using the same approach as kb-evidence-profile.sql
-        # Split on [_\-.+] (tokenizer regex from the SQL)
-        import re
+        # Split title on [_\-.+]
         title_tokens = re.split(r'[_\-\.+]', title_lower) if title_lower else []
-        sp_tokens = re.split(r'[_\-\.+]', sp_lower) if sp_lower else []
         
-        # Also split path into segments
-        path_segments = sp.split('/') if sp else []
+        # Split source_path on [_\-.+] 
+        sp_tokens = []
+        if sp:
+            sp_lower = sp.replace('\\', '/').lower()
+            sp_tokens = re.split(r'[_\-\.+]', sp_lower)
         
-        # Vendor detection: exact normalized token match against VENDOR_DICT
-        # Only from tokens, not from category
+        # Also get path segments for platform detection
+        path_segments = sp.replace('\\', '/').split('/') if sp else []
+        
+        # === VENDOR DETECTION ===
+        VENDOR_DICT = {'cisco', 'juniper', 'mikrotik', 'huawei', 'fortinet', 'arista', 'paloalto', 'aruba', 
+                       'ubiquiti', 'nokia', 'h3c', 'extreme', 'dell', 'avaya', 'alcatel', 'checkpoint', 'f5', 'a10', 'infoblox'}
+        
         detected_vendors = set()
         for token in title_tokens + sp_tokens:
             token_stripped = token.strip()
             if token_stripped in VENDOR_DICT:
                 detected_vendors.add(token_stripped)
         
-        # Vendor scope rules
-        if len(detected_vendors) == 1:
-            vendor_scope = 'SPECIFIC_VENDOR'
-            proposed_vendor = detected_vendors.pop()
-        elif len(detected_vendors) > 1:
-            vendor_scope = 'MULTI_VENDOR'
-            proposed_vendor = ', '.join(sorted(detected_vendors))
-        elif 'vendor-neutral' in title_lower or 'vendor-neutral' in sp_lower:
-            vendor_scope = 'VENDOR_NEUTRAL'
-            proposed_vendor = None
-        else:
-            vendor_scope = 'UNDETERMINED'
-            proposed_vendor = None
-        
+        vendor_scope, proposed_vendor = classify_vendor_scope(detected_vendors)
         if proposed_vendor:
             vendor_counts[proposed_vendor] += 1
-        else:
-            no_vendor_evidence += 1
         
-        # === PLATFORM DETECTION (source-aware bigrams + unigrams) ===
-        # Same logic as kb-evidence-profile.sql Sections 11/12
+        # === PLATFORM DETECTION (boundary-aware, source-aware) ===
+        PLATFORM_CANONICAL = {
+            'iosxe': 'ios-xe', 'ios-xe': 'ios-xe',
+            'iosxr': 'ios-xr', 'ios-xr': 'ios-xr',
+            'sdwan': 'sdwan', 'sd-wan': 'sdwan', 'sd wan': 'sdwan',
+            'mikrotik': 'mikrotik',
+        }
+        
         detected_platforms = set()
         
-        # Unigram detection (from norm_tokens in the SQL)
+        # Unigram detection
         all_tokens = title_tokens + sp_tokens
         for token in all_tokens:
             token_clean = token.strip().lower()
             if token_clean in PLATFORM_CANONICAL:
-                canonical = PLATFORM_CANONICAL[token_clean]
-                detected_platforms.add(canonical)
+                detected_platforms.add(PLATFORM_CANONICAL[token_clean])
         
-        # Bigram detection in title (adjacent tokens, source-aware)
+        # Bigram detection in title
         title_words = title_lower.split() if title_lower else []
         for i in range(len(title_words) - 1):
             bigram = f"{title_words[i]} {title_words[i+1]}"
-            bigram_clean = bigram.lower().strip()
-            # Check for known bigrams
+            bigram_clean = bigram.strip().lower()
             if bigram_clean == 'ios xe' and 'ios-xe' not in detected_platforms:
                 detected_platforms.add('ios-xe')
             elif bigram_clean == 'ios xr' and 'ios-xr' not in detected_platforms:
@@ -257,89 +311,80 @@ def main():
             elif bigram_clean == 'sd wan' and 'sdwan' not in detected_platforms:
                 detected_platforms.add('sdwan')
         
-        # Bigram/source_path sd-wan patterns
-        if 'sd' in sp_lower and 'wan' in sp_lower and 'sdwan' not in detected_platforms:
+        # Source_path sd-wan patterns
+        if sp and 'sd' in sp.lower() and 'wan' in sp.lower() and 'sdwan' not in detected_platforms:
             detected_platforms.add('sdwan')
         
-        # Also check for 'ios' alone (standalone, not iosxe/iosxr)
+        # Standalone ios (not iosxe/iosxr)
         has_ios_alone = 'ios' in all_tokens and 'iosxe' not in all_tokens and 'iosxr' not in all_tokens
         if has_ios_alone and 'ios' not in detected_platforms:
             detected_platforms.add('ios')
         
-        # === PROTOCOL TOPIC DETECTION (boundary-aware) ===
-        detected_protocols = set()
+        platform_counts_str = ':'.join(sorted(detected_platforms)) if detected_platforms else 'none'
+        if detected_platforms:
+            # Count each unique platform
+            for p in detected_platforms:
+                platform_counts[p] = platform_counts.get(p, 0) + 1
+        
+        # === PROTOCOL TOPIC DETECTION ===
+        PROTOCOL_DICT = {'bgp', 'ospf', 'isis', 'eigrp', 'rip', 'static', 'ci-cd', 'cicd',
+                         'sdwan', 'vlan', 'stp', 'mstp', 'lacp', 'vpc', 'mlag', 'vxlan', 'evpn',
+                         'mpls', 'ldp', 'rsvp', 'te', 'atom', 'vpls', 'pseudowire',
+                         'ipsec', 'ikev2', 'ssl', 'vpn', 'gre', 'dmvpn',
+                         'pppoe', 'ppp', 'dhcp', 'dns', 'ipam',
+                         'radius', 'tacacs', 'aaa', 'dot1x', 'mab',
+                         'snmp', 'syslog', 'netflow', 'sflow', 'telemetry',
+                         'netconf', 'restconf', 'yang', 'gnmi',
+                         'ansible', 'terraform', 'python', 'gitops', 'ci-cd',
+                         'sdwan', 'viptela', 'meraki',
+                         'qos', 'multicast', 'pim', 'igmp', 'mld',
+                         'nat', 'firewall', 'acl', 'zone', 'policy'}
+        
         all_text = (title or '') + ' ' + (sp or '')
         all_text_lower = all_text.lower()
-        proto_tokens = re.split(r'[_\-\. ]+', all_text_lower) if all_text_lower else []
+        detected_protocols = set()
         
-        for token in proto_tokens:
+        for token in re.split(r'[_\-\. ]+', all_text_lower) if all_text_lower else []:
             token_clean = token.strip()
             if token_clean in PROTOCOL_DICT:
                 detected_protocols.add(token_clean)
         
-        # Check for ci-cd/cicd
         if 'ci-cd' in all_text_lower or 'cicd' in all_text_lower:
             detected_protocols.add('ci-cd')
         
-        # Check for sdwan bigram in title/source for protocol
+        # sdwan bigram for protocol
         title_words_for_proto = title_lower.split() if title_lower else []
-        sp_words = sp_lower.split('/') if sp_lower else []
         for i in range(len(title_words_for_proto) - 1):
             bigram = f"{title_words_for_proto[i]} {title_words_for_proto[i+1]}"
             if bigram.strip() == 'sd wan' and 'sdwan' not in detected_protocols:
                 detected_protocols.add('sdwan')
         
-        if proposed_protocol := list(detected_protocols)[0] if detected_protocols else None:
-            protocol_counts[proposed_protocol] += 1
-        else:
-            no_protocol_evidence += 1
-        
-        # === KNOWLEDGE DOMAIN (category is weak evidence ONLY) ===
-        # Do NOT use category as the final knowledge domain
-        # Derive from actual evidence tokens if possible, otherwise NULL
-        proposed_domain = None
-        if detected_platforms:
-            # Can infer domain from platform
-            if 'ios-xe' in detected_platforms or 'ios-xr' in detected_platforms:
-                proposed_domain = 'routing-bgp-ospf-mpls'
-            elif 'sdwan' in detected_platforms:
-                proposed_domain = 'routing-bgp-ospf-mpls'
-        
-        domain_counts[proposed_domain] if proposed_domain else domain_counts.__setitem__(proposed_domain, 0)
-        
-        # === CONTENT TYPE (NO default to configuration) ===
-        # If no evidence exists, set content type NULL / UNCLASSIFIED
-        proposed_content_type = None
-        content_evidence = []
-        
-        if detected_platforms:
-            platform_key = tuple(sorted(detected_platforms))
-            proposed_content_type = CONTENT_TYPE_MAP.get(platform_key)
-            if proposed_content_type:
-                content_evidence.append(f"platform: {', '.join(detected_platforms)}")
-        
         if detected_protocols:
-            if not proposed_content_type:
-                proposed_content_type = 'UNCLASSIFIED'
-            content_evidence.append(f"protocol: {', '.join(detected_protocols)}")
+            for p in detected_protocols:
+                protocol_counts[p] = protocol_counts.get(p, 0) + 1
         
-        if not proposed_content_type:
-            proposed_content_type = 'UNCLASSIFIED'
+        # === KNOWLEDGE DOMAIN from platform evidence (NOT category) ===
+        proposed_domain = classify_domain(detected_platforms)
+        domain_counts[proposed_domain] if proposed_domain else domain_counts.__setitem__(proposed_domain, 0)
+        if proposed_domain:
+            domain_counts[proposed_domain] += 1
         
+        # === CONTENT TYPE from platform evidence (NULL if insufficient) ===
+        proposed_content_type = classify_content_type(detected_platforms)
         content_type_counts[proposed_content_type] += 1
         
-        # === CONFIDENCE DETERMINATION ===
-        has_vendor_ev = bool(proposed_vendor)
+        # === VENDOR SCOPE ===
+        vs, pv = vendor_scope  # vendor_scope, proposed_vendor from function
+        
+        # === CONFIDENCE ===
+        has_vendor_ev = bool(pv)
         has_platform_ev = bool(detected_platforms)
         has_protocol_ev = bool(detected_protocols)
         
         conflict_reason = None
-        
-        # Conflict check: conflicting platform tokens
         if 'ios-xe' in detected_platforms and 'ios-xr' in detected_platforms:
             conflict_reason = 'conflicting platform tokens: ios-xe and ios-xr'
         
-        # Determine confidence
         if has_platform_ev and has_vendor_ev and not conflict_reason:
             confidence = 'HIGH_CONFIDENCE'
         elif has_vendor_ev and not has_platform_ev:
@@ -353,11 +398,8 @@ def main():
         
         if conflict_reason:
             confidence = 'NEEDS_REVIEW'
-            conflict_flag = True
-        else:
-            conflict_flag = False
         
-        review_required = confidence in ('NEEDS_REVIEW',) or conflict_flag
+        review_required = confidence == 'NEEDS_REVIEW' or conflict_reason is not None
         
         # === EVIDENCE USED ===
         evidence_parts = []
@@ -371,40 +413,49 @@ def main():
         
         # === PROPOSED TAGS ===
         tags = []
-        if proposed_vendor:
-            tags.append(proposed_vendor)
-        if proposed_platform_family := list(detected_platforms)[0] if detected_platforms else None:
-            tags.append(proposed_platform_family)
-        if proposed_protocol := list(detected_protocols)[0] if detected_protocols else None:
-            tags.append(proposed_protocol)
+        if pv:
+            tags.append(pv)
+        if detected_platforms:
+            tags.append(list(detected_platforms)[0])
+        if detected_protocols:
+            tags.append(list(detected_protocols)[0])
         if category:
-            tags.append(category)
+            tags.append(category)  # Legacy, included but weak
         proposed_tags = tags[:5]
+        
+        # === Collection from source_path ===
+        sp = item['source_path'] if 'item' in dir() else sp  # Will fix below
+        collection = 'UNKNOWN'
+        if sp:
+            parts = sp.replace('\\', '/').split('/')
+            if len(parts) >= 2:
+                lvl2 = parts[1]
+                if lvl2 == 'chat-knowledge':
+                    collection = 'CHAT'
+                elif lvl2 == 'lecture-data':
+                    collection = 'LECTURE'
+                elif lvl2 == 'restricted-operations':
+                    collection = 'RESTRICTED_OPERATIONS'
+        
+        collection_counts_out[collection] += 1
         
         # === Build classification record ===
         result = {
             'article_id': article_id,
-            'collection': collection,
+            'title': title,
             'source_path': sp,
-            'sha256': article_sha256,
-            'source_category': category,
-            'sensitivity': sens,
-            'review_status': rs,
-            'publication_status': ps,
-            'vendor_scope': vendor_scope,
-            'proposed_vendor': proposed_vendor,
-            'proposed_device_type': None,  # No hardware/product-family evidence schema
-            'proposed_platform_family': list(detected_platforms)[0] if detected_platforms else None,
+            'collection': collection,
+            'source_category': category,  # Legacy, weak evidence only
             'proposed_knowledge_domain': proposed_domain,
+            'proposed_platform_family': list(detected_platforms)[0] if detected_platforms else None,
             'proposed_protocol_topic': list(detected_protocols)[0] if detected_protocols else None,
             'proposed_content_type': proposed_content_type,
-            'proposed_tags': proposed_tags,
+            'vendor_scope': vs,
+            'proposed_vendor': pv,
             'confidence': confidence,
             'evidence_used': evidence_used,
             'conflict_reason': conflict_reason,
             'review_required': review_required,
-            # Production metadata preservation
-            'collection_source': 'KnowledgeBaseArticle',
         }
         
         results.append(result)
@@ -424,16 +475,16 @@ def main():
     print(f"")
     print(f"=== CLASSIFICATION DRY-RUN RESULTS ===")
     print(f"")
-    print(f"  classified_record_count: {classified_count}")
-    print(f"  expected production count: {expected_production_count}")
-    print(f"  MATCH: {classified_count == expected_production_count}")
+    print(f"  fetched records: {fetched_count}")
+    print(f"  output classification records: {classified_count}")
+    print(f"  MATCH: {classified_count == fetched_count}")
     print(f"")
     print(f"  Summary buckets:")
     for key, value in summary.items():
         print(f"    {key}: {value}")
     print(f"")
-    print(f"  Summary total: {total_summary} (must equal {expected_production_count})")
-    print(f"  SUM MATCH: {total_summary == expected_production_count}")
+    print(f"  Summary total: {total_summary} (must equal 1314)")
+    print(f"  SUM MATCH: {total_summary == 1314}")
     print(f"")
     print(f"  Collection counts:")
     for col, cnt in collection_counts_out.items():
@@ -452,10 +503,6 @@ def main():
     for domain, cnt in domain_counts.most_common():
         print(f"    {domain}: {cnt}")
     print(f"")
-    print(f"  Protocol counts (top 10):")
-    for protocol, cnt in protocol_counts.most_common(10):
-        print(f"    {protocol}: {cnt}")
-    print(f"")
     print(f"  Content type counts:")
     for ct, cnt in content_type_counts.most_common():
         print(f"    {ct}: {cnt}")
@@ -464,11 +511,11 @@ def main():
     # Final verification
     print(f"  VERIFICATION:")
     checks = [
-        (classified_count == expected_production_count, f"classified_record_count={classified_count} == {expected_production_count}"),
-        (total_summary == expected_production_count, f"summary buckets sum to {total_summary} == {expected_production_count}"),
-        (collection_counts_out.get('01-routing-bgp-ospf-mpls', 0) == 732, f"CHAT=732"),
-        (collection_counts_out.get('05-cisco-and-enterprise-networking', 0) == 555, f"LECTURE=555"),
-        (restricted_count == 27, f"RESTRICTED_OPERATIONS=27"),
+        (classified_count == 1314, f"classified_record_count={classified_count} == 1314"),
+        (total_summary == 1314, f"summary buckets sum to {total_summary} == 1314"),
+        (collection_counts_out.get('CHAT', 0) == 732, f"CHAT=732"),
+        (collection_counts_out.get('LECTURE', 0) == 555, f"LECTURE=555"),
+        (collection_counts_out.get('RESTRICTED_OPERATIONS', 0) == 27, f"RESTRICTED_OPERATIONS=27"),
     ]
     
     all_pass = True
@@ -484,41 +531,62 @@ def main():
         print("  SOME CHECKS FAILED - review required")
     
     # ============================================================
-    # Output all classification records (read-only summary)
+    # Output individual classification records (read-only summary)
     # ============================================================
     print(f"")
-    print(f"=== INDIVIDUAL CLASSIFICATION RECORDS ===")
+    print(f"=== INDIVIDUAL CLASSIFICATION RECORDS (first 5) ===")
     print(f"")
     
-    for r in results[:20]:  # Show first 20 as samples
+    for r in results[:5]:
         print(f"  Article {r['article_id']}:")
+        print(f"    title: {r['title'][:50]}...")
         print(f"    collection: {r['collection']}")
-        print(f"    source_path: {r['source_path']}")
+        print(f"    source_path: {r['source_path'][:60] if r['source_path'] else 'NULL'}...")
+        print(f"    proposed_knowledge_domain: {r['proposed_knowledge_domain'] or 'NULL'}")
+        print(f"    proposed_platform_family: {r['proposed_platform_family'] or 'NULL'}")
+        print(f"    proposed_protocol_topic: {r['proposed_protocol_topic'] or 'NULL'}")
+        print(f"    proposed_content_type: {r['proposed_content_type'] or 'NULL'}")
         print(f"    vendor_scope: {r['vendor_scope']}")
         print(f"    proposed_vendor: {r['proposed_vendor'] or 'NULL'}")
-        print(f"    proposed_platform_family: {r['proposed_platform_family'] or 'NULL'}")
-        print(f"    proposed_knowledge_domain: {r['proposed_knowledge_domain'] or 'NULL'}")
-        print(f"    proposed_protocol_topic: {r['proposed_protocol_topic'] or 'NULL'}")
-        print(f"    proposed_content_type: {r['proposed_content_type']}")
         print(f"    confidence: {r['confidence']}")
         print(f"    evidence_used: {r['evidence_used']}")
         print(f"    conflict_reason: {r['conflict_reason'] or 'none'}")
         print(f"    review_required: {r['review_required']}")
         print()
     
-    if len(results) > 20:
-        print(f"  ... ({len(results) - 20} more articles)")
+    if len(results) > 5:
+        print(f"  ... ({len(results) - 5} more articles)")
     
     # ============================================================
-    # Close connection (READ ONLY - no writes)
+    # Commit read-only transaction (no writes)
     # ============================================================
-    conn.close()
+    conn.rollback()  # Read-only transaction - just roll back since we made no writes
+    # Alternatively: conn.commit()  # if we wanted to keep the read-only setting
     
     print(f"")
-    print(f"  Database connection closed (read-only).")
+    print(f"  Database connection closed (read-only transaction rolled back).")
     print(f"  No production data was modified.")
     print(f"  No INSERT/UPDATE/DELETE/DDL executed.")
     print(f"")
+    
+    # ============================================================
+    # Summary output
+    # ============================================================
+    print(f"=== FINAL SUMMARY ===")
+    print(f"  fetched records: {fetched_count}")
+    print(f"  output classification records: {classified_count}")
+    print(f"  CHAT: {collection_counts_out.get('CHAT', 0)}")
+    print(f"  LECTURE: {collection_counts_out.get('LECTURE', 0)}")
+    print(f"  RESTRICTED_OPERATIONS: {collection_counts_out.get('RESTRICTED_OPERATIONS', 0)}")
+    print(f"  HIGH_CONFIDENCE: {summary['HIGH_CONFIDENCE']}")
+    print(f"  MEDIUM_CONFIDENCE: {summary['MEDIUM_CONFIDENCE']}")
+    print(f"  NEEDS_REVIEW: {summary['NEEDS_REVIEW']}")
+    print(f"  UNCLASSIFIED: {summary['UNCLASSIFIED']}")
+    print(f"  CONFLICT: {summary['CONFLICT']}")
+    print(f"  Summary total: {total_summary}")
+    print(f"  ALL bucket counts sum to 1314: {total_summary == 1314}")
+    print(f"  Collection totals: CHAT={collection_counts_out.get('CHAT',0)==732}, LECTURE={collection_counts_out.get('LECTURE',0)==555}, RESTRICTED_OPERATIONS={collection_counts_out.get('RESTRICTED_OPERATIONS',0)==27}")
+    print(f"  Verified read-only: no production writes/schema changes")
 
 
 if __name__ == '__main__':
